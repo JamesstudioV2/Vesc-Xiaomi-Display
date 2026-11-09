@@ -247,6 +247,34 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `front-enabled`, `p1-front-brake`: az első vezérlő használata, és hogy az
   1-es profilban fékezzen-e az első motor (alapból nem, csak a hátsó dolgozik).
 
+## Bluetooth (VESC Tool)
+
+A kijelző Bluetooth-a **nem használható** a VESC Tool-hoz:
+- A VESC Tool csak a Nordic UART szolgáltatást (NUS) hirdető eszközöket
+  listázza (Windows alatt mindet), és azon keresztül a VESC saját csomagjait
+  küldi. Ehhez VESC-firmware-es Bluetooth-modul kell: NRF modul vagy VESC Express.
+- A kijelző Bluetooth-a a Xiaomi zárt firmware-ét futtatja. Csak
+  Xiaomi-formátumú kereteket ad tovább a busz felé, és azokat is átalakítja (az
+  app olvasási kérésébe beleteszi a gáz- és fékértéket). A VESC-csomagokat
+  nem engedi át. A firmware-t nem lehet úgy lecserélni, hogy a kijelző közben
+  működjön.
+- Elvben egy saját, PC-n futó „híd” program a VESC-üzeneteket
+  Xiaomi-keretekbe csomagolva átjuttathatná. Ez viszont nagyon lassú lenne,
+  mert a kijelző a saját ütemében, másodpercenként néhányszor közvetít, és csak
+  PC-ről működne, a VESC Tool mobilappal nem. PC-n pedig az USB-kábel egyszerűbb.
+
+**Ajánlott megoldás: VESC Express a CAN-buszon.** A VESC Tool telefonról és
+PC-ről is Bluetooth-on kapcsolódik hozzá, és a CAN-en keresztül mindkét
+vezérlőt eléri (beállítás, firmware, Lisp, naplózás). A kijelző UART-ját nem
+érinti, és a scripteken sem kell változtatni.
+- **Kész modul:** hivatalos VESC Express vagy egy vele kompatibilis modul.
+- **Házilag:** egy ESP32-S3 fejlesztőpanel és egy 3,3 V-os CAN transceiver
+  (pl. SN65HVD230). A [VESC Express](https://github.com/vedderb/vesc_express)
+  firmware `S3 N16R8` (ESP32-S3-DevKitC-1 N16R8) és `S3 FH4R2` célhardvere a
+  CAN-t a **GPIO16 (TX)** és **GPIO17 (RX)** lábon használja. A firmware az
+  ESP32 USB-portján tölthető fel. A tápot a VESC 5V-járól kaphatja. A CAN ID
+  legyen egyedi, a CAN sebesség pedig ugyanaz, mint a két vezérlőé.
+
 ## Fejlesztés, tesztek
 
 ```bash
