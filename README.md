@@ -256,7 +256,7 @@ gyorsul. Ezért van sebességkorlát.
 5. **Engedd el a féket**, a gázt tartsd nyomva.
 
 **Kilépés:**
-- a **gáz elengedése** (a gázkar 30% alá), vagy
+- a **gáz elengedése** (a gázkarnak legalább 70%-on kell maradnia, ez alatt kilép), vagy
 - a **fék újbóli behúzása** (a felengedése után), vagy
 - ha a féket 2 másodpercen belül nem engeded el.
 
@@ -271,8 +271,8 @@ roller. Kilépés után **2 másodpercig** nem lehet újra bekapcsolni.
 | az eleje leért | 4° alatt | kilép |
 | túl nagy szög (hátraborulás veszélye) | 50° fölött | kilép |
 | oldalra dőlés | 30° fölött | kilép |
-| sebességkorlát | 20 km/h fölött | a célszöget 15°/s-mal csökkenti, így leteszi az elejét |
-| túl gyors | 25 km/h fölött | azonnal kilép |
+| sebességkorlát | 30 km/h fölött | fél másodpercenként sípol, és a célszöget 15°/s-mal legfeljebb 10°-kal (de 8° alá soha) lejjebb viszi, ez lassít. Nem teszi le az elejét, 28 km/h alatt visszaáll az eredeti szög |
+| túl gyors | 35 km/h fölött | kilép |
 | hátramenet | 3 km/h fölött | kilép |
 | nincs kijelzőkeret, VESC hiba, nincs IMU adat | | kilép |
 

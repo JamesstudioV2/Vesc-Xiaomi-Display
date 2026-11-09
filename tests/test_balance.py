@@ -66,7 +66,7 @@ class ActivationTests(unittest.TestCase):
         self.assertTrue(r.v.output_disabled, "ADC app off: the script drives the rear motor")
         self.assertAlmostEqual(r.g("bal-setpoint"), 20.0)
         self.assertEqual(r.v.conf["l-current-max-scale"], 1.0)
-        self.assertAlmostEqual(r.v.conf["max-speed"], 30 / 3.6)
+        self.assertAlmostEqual(r.v.conf["max-speed"], 40 / 3.6)
         tick(r, secs(0.2))
         sid, data = r.v.can_tx[-1]
         self.assertEqual(data[1], 0, "front motor disabled while balancing")
@@ -256,24 +256,42 @@ class ExitTests(unittest.TestCase):
         self.assertEqual(r.g("bal-state"), "off")
         self.assertEqual(r.g("bal-reason"), "nincs-kijelzo")
 
-    def test_speed_limit_lands_softly(self):
+    def test_speed_limit_lowers_front_beeps_but_keeps_balancing(self):
         r = rear_balancing(20.0)
         tick(r, secs(0.4))
-        r.kmh(21.0)
+        r.kmh(31.0)
+        n = len(r.v.tx)
         tick(r, 2)
-        self.assertEqual(r.g("bal-state"), "landing")
-        sp0 = r.g("bal-setpoint")
-        tick(r, secs(0.5))
-        self.assertLess(r.g("bal-setpoint"), sp0 - 6.0, "15 deg/s down")
-        angle(r, 3.5)
-        tick(r, 2)
-        self.assert_exit(r, "leszallt")
+        self.assertEqual(r.g("bal-state"), "limit")
+        tick(r, secs(2.0))
+        self.assertAlmostEqual(r.g("bal-setpoint"), 10.0, places=3, msg="20 - 10 deg, not to zero")
+        self.assertEqual(r.g("bal-state"), "limit", "still balancing")
+        self.assertGreaterEqual(sum(f[9] for f in r.v.tx[n:]), 3, "beeps while over the limit")
+        r.kmh(27.0)
+        tick(r, secs(1.0))
+        self.assertEqual(r.g("bal-state"), "on")
+        self.assertAlmostEqual(r.g("bal-setpoint"), 20.0, places=3, msg="back to the start angle")
+
+    def test_limit_floor_angle(self):
+        r = rear_balancing(12.0)
+        r.kmh(31.0)
+        tick(r, secs(2.0))
+        self.assertAlmostEqual(r.g("bal-setpoint"), 8.0, places=3)
 
     def test_too_fast_hard_exit(self):
         r = rear_balancing(20.0)
-        r.kmh(26.0)
+        r.kmh(34.0)
+        tick(r, 3)
+        self.assertEqual(r.g("bal-state"), "limit")
+        r.kmh(36.0)
         tick(r, 3)
         self.assert_exit(r, "tul-gyors")
+
+    def test_throttle_hold_is_70_percent(self):
+        r = rear_balancing(20.0)
+        r.thr = 0x70  # ~1.45 V -> ~54 %
+        tick(r, 3)
+        self.assert_exit(r, "gaz-elengedve")
 
     def test_throttle_locked_after_exit_until_released(self):
         r = rear_balancing(20.0)

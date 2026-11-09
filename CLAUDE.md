@@ -34,9 +34,10 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   Az `l-current-max-scale` 1,0, a `max-speed` = balansz-korlát + 10 km/h; kilépéskor `apply-mode-limits` visszaállítja.
 - Szabályzó: PD (Ki = 0 alapból), célszög = a bekapcsoláskori szög. Kp 8 A/fok, Kd 1,0, 40 A, 400 A/s, 0,3 s felfutás.
   Hiba + = az eleje lejjebb van → pozitív áram (gyorsít). A deriváltat a szög numerikus deriváltjából számolja (LP 0,3).
-- Kilépés: gáz < 0,3; a fék újbóli behúzása (> 0,3, a felengedése után); a fék 2 s-on belül nincs elengedve; a szög < 4°
-  (leszállt); > 50°; roll > 30°; hátramenet > 3 km/h; > 25 km/h; nincs kijelzőkeret 0,3 s; VESC hiba; nincs IMU adat;
-  script hiba. 20 km/h fölött 'landing: a célszög 15°/s-mal csökken.
+- Kilépés: gáz < 0,7 (70%, a felhasználó kérése); a fék újbóli behúzása (> 0,3, a felengedése után); a fék 2 s-on belül nincs elengedve; a szög < 4°
+  (leszállt); > 50°; roll > 30°; hátramenet > 3 km/h; > 35 km/h (`balance-cutoff-speed`); nincs kijelzőkeret 0,3 s; VESC hiba; nincs IMU adat;
+  script hiba. 30 km/h fölött 'limit: 0,5 s-onként sípol, a célszög 15°/s-mal csökken, legfeljebb 10°-kal
+  (min. 8°), NEM teszi le; 28 km/h alatt vissza 'on, a célszög visszaáll. VESC `max-speed` = 35 + 5 km/h.
 - Kilépés után: ADC app vissza (a fék működik), a gáz `bal-thr-lock`-kal fogva, amíg el nem engedik (`thr-lvl` < 0,05).
 - `thr-lvl`/`brk-lvl`: a nyers kijelzőértékből, a VESC Tool ADC kalibrációja szerint, a gázfogástól függetlenül.
 - Balansz alatt a módváltás tiltva, a lámpa kapcsolható. A féklámpa villog, ha az áram < −5 A.
@@ -82,7 +83,8 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   Xiaomi-kompatibilis appok (pl. m365 Tools) támogatása a kijelző BLE-jén (adatok, lámpa, mód; VESC-beállítást nem tud).
 
 - 2026-11-09: **Balance ág** létrehozva: balansz mód (egykerekes indulás), részletek fent. 67 teszt átmegy.
-  A felhasználónak irányteszt kell felemelt hátsó kerékkel (README „Első próbák”), utána óvatos hangolás.
+  Módosítva (felhasználói kérés): gázkitartás 70%, 30 km/h-nál sípolás + lejjebb engedés (nem nullára), kilépés 35-nél.
+  69 teszt átmegy. A felhasználónak irányteszt kell felemelt hátsó kerékkel (README „Első próbák”), utána óvatos hangolás.
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).

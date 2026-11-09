@@ -95,7 +95,7 @@
 (def balance-max-start-speed 1.0) ; km/h - csak álló helyzetből indul
 (def balance-activate-level 0.9)  ; gáz és fék legalább ennyi (0-1)...
 (def balance-activate-time 1.0)   ; s - ...ennyi ideig egyszerre
-(def balance-hold-level 0.3)      ; a gáz e fölött tartja a balansz módot
+(def balance-hold-level 0.7)      ; a gáz e fölött (70%) tartja a balansz módot
 (def balance-brake-level 0.3)     ; a fék e fölött (felengedése után) kilép
 (def balance-cooldown 2.0)        ; s - kilépés után ennyi ideig nem indul újra
 (def balance-kp 8.0)              ; A / fok - arányos tag
@@ -107,9 +107,13 @@
 (def balance-land-angle 4.0)      ; fok - ez alatt az eleje leért: kilép
 (def balance-max-angle 50.0)      ; fok - e fölött hátraborulás veszélye: kilép
 (def balance-max-roll 30.0)       ; fok - oldalra dőlés: kilép
-(def balance-max-speed 20.0)      ; km/h - e fölött lassan leteszi az elejét
+(def balance-max-speed 30.0)      ; km/h - e fölött sípol és lejjebb engedi az elejét (de nem teszi le)
+(def balance-cutoff-speed 35.0)   ; km/h - e fölött kilép
 (def balance-max-reverse 3.0)     ; km/h - ennél gyorsabb hátramenet: kilép
-(def balance-land-rate 15.0)      ; fok/s - leszálláskor ilyen gyorsan csökken a célszög
+(def balance-land-rate 15.0)      ; fok/s - sebességkorlátnál ilyen gyorsan változik a célszög
+(def balance-limit-drop 10.0)     ; fok - sebességkorlátnál legfeljebb ennyivel engedi lejjebb az elejét
+(def balance-limit-min-angle 8.0) ; fok - de ennél lejjebb soha (a leszállás 4°-nál van)
+(def balance-limit-beep 0.5)      ; s - sebességkorlátnál ilyen időközönként sípol
 
 ; -> Belső állapot (ne módosítsd) -----------------------------------------------
 
@@ -159,7 +163,7 @@
 (def thr-end 2.0)
 (def brk-start 0.8)
 (def brk-end 2.0)
-(def bal-state 'off)           ; 'off, 'arming, 'on, 'landing
+(def bal-state 'off)           ; 'off, 'arming, 'on, 'limit (sebességkorlát)
 (def bal-arm-start 0)
 (def bal-start-time 0)
 (def bal-exit-time 0)
@@ -170,6 +174,8 @@
 (def bal-prev-angle 0.0)
 (def bal-rate 0.0)
 (def bal-setpoint 0.0)
+(def bal-base-setpoint 0.0)      ; a bekapcsoláskori célszög
+(def bal-beep-time 0)
 (def bal-integral 0.0)
 (def bal-current 0.0)
 (def bal-brake-released nil)
@@ -196,7 +202,7 @@
         (cond ((= mode 2) p1-eco) ((= mode 4) p1-sport) (t p1-drive)) ; 0 = még nincs profil -> 1-es
 ))
 
-(defun balancing () (or (eq bal-state 'on) (eq bal-state 'landing)))
+(defun balancing () (or (eq bal-state 'on) (eq bal-state 'limit)))
 
 (defun front-flags () ; bit0 = hajtás, bit1 = fék
     (cond
@@ -511,6 +517,7 @@
 
 (defun balance-start () {
         (setq bal-setpoint (clamp bal-angle balance-start-min balance-start-max))
+        (setq bal-base-setpoint bal-setpoint)
         (setq bal-integral 0.0)
         (setq bal-current 0.0)
         (setq bal-prev-angle bal-angle)
@@ -525,7 +532,7 @@
         ; teljes fázisáram, és a VESC sebességkorlátja ne vágjon bele a
         ; balansz saját sebességkorlátja előtt (kilépéskor a mód korlátai visszaállnak)
         (conf-set 'l-current-max-scale 1.0)
-        (conf-set 'max-speed (/ (+ balance-max-speed 10.0) 3.6))
+        (conf-set 'max-speed (/ (+ balance-cutoff-speed 5.0) 3.6))
         (setq beep-count 2)
         (print (list 'balansz-be 'celszog bal-setpoint))
 })
@@ -545,10 +552,22 @@
 })
 
 (defun balance-control (dt spd) {
-        ; sebességkorlát: a célszög lassú csökkentésével leteszi az elejét
-        (if (and (eq bal-state 'on) (> spd balance-max-speed)) (setq bal-state 'landing))
-        (if (eq bal-state 'landing)
-            (setq bal-setpoint (- bal-setpoint (* balance-land-rate dt))))
+        ; Sebességkorlát: sípol, és a célszöget lassan lejjebb viszi (a lejjebb
+        ; engedett eleje fékezéssel jár), de nem teszi le. 2 km/h-val a korlát
+        ; alatt a célszög visszaáll a bekapcsoláskorira.
+        (if (and (eq bal-state 'on) (> spd balance-max-speed)) (setq bal-state 'limit))
+        (if (and (eq bal-state 'limit) (< spd (- balance-max-speed 2.0))) (setq bal-state 'on))
+        (var target (if (eq bal-state 'limit)
+                (if (> (- bal-base-setpoint balance-limit-drop) balance-limit-min-angle)
+                    (- bal-base-setpoint balance-limit-drop)
+                    balance-limit-min-angle)
+                bal-base-setpoint))
+        (var sstep (* balance-land-rate dt))
+        (setq bal-setpoint (+ bal-setpoint (clamp (- target bal-setpoint) (- 0.0 sstep) sstep)))
+        (if (and (eq bal-state 'limit) (> (secs-since bal-beep-time) balance-limit-beep)) {
+                (setq bal-beep-time (systime))
+                (setq beep-count 1)
+        })
         (var err (- bal-setpoint bal-angle)) ; + = az eleje lejjebb van -> gyorsítani kell
         (var ilim (if (> balance-ki 0.0) (/ (* 0.5 balance-max-current) balance-ki) 0.0))
         (setq bal-integral (clamp (+ bal-integral (* err dt)) (- 0.0 ilim) ilim))
@@ -580,7 +599,7 @@
             ((> bal-angle balance-max-angle) (balance-stop 'tul-nagy-szog))
             ((> (abs bal-roll) balance-max-roll) (balance-stop 'oldaldoles))
             ((< spd (- 0.0 balance-max-reverse)) (balance-stop 'hatramenet))
-            ((> spd (+ balance-max-speed 5.0)) (balance-stop 'tul-gyors))
+            ((> spd balance-cutoff-speed) (balance-stop 'tul-gyors))
             ((< bal-angle balance-land-angle) (balance-stop 'leszallt))
             (t (balance-control dt spd)))
 })
