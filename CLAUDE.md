@@ -62,6 +62,10 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 - 2026-11-09: **`Balance` ág** létrehozva (csak ott!): kísérleti balansz mód, egykerekes indulás a hátsó keréken
   2-es profilban (gáz + fék 1 s, felemelt elejével, álló helyzetből; a hátsó motor PD-vel tartja a szöget).
   A részletek az ág `CLAUDE.md`-jében és README-jében vannak. A `main`-be még nincs beolvasztva.
+- 2026-11-09: **`Advanced-Balance` ág** létrehozva (a Balance ágból, csak ott!): fék + 2x gomb kapcsolja 2-es
+  profilban; a hátsó áram = min(gáz, szögkorlát a kézzel beírt célszög körül), fékezhet is; csavarkulcs ikon;
+  laza kipörgésgátló az első és hátsó kerék között; lekapcsolás 60° oldalra/hátra. Részletek az ág fájljaiban.
+  Megtalált, még nem javított eltérés: a lucidnx szerint a lámpa ikon a lámpa mező 6-os bitje (gyári 0x64), mi 1-et küldünk.
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
