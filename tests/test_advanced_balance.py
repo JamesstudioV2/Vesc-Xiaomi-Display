@@ -86,7 +86,10 @@ class ToggleTests(unittest.TestCase):
         self.assertTrue(r.g("ab-on"))
         self.assertTrue(r.v.output_disabled, "the script drives both motors")
         self.assertGreaterEqual(sum(f[9] for f in r.v.tx[n:]), 2, "two beeps")
-        self.assertEqual(r.last_dash()[11], 88, "wrench icon via the error field")
+        f = r.last_dash()
+        self.assertEqual(f[6] & 32, 32, "lock icon (LOCK bit)")
+        self.assertEqual(f[6] & 7, 4, "speed mode bits kept")
+        self.assertEqual(f[11], 0, "no error code")
         self.assertEqual(r.g("speedmode"), 4, "no mode change")
 
     def test_double_press_without_brake_changes_mode(self):
@@ -102,7 +105,9 @@ class ToggleTests(unittest.TestCase):
         self.assertEqual(r.g("ab-on"), None)
         self.assertEqual(r.g("ab-reason"), "kikapcsolva")
         self.assertFalse(r.v.output_disabled, "back to the ADC app")
-        self.assertEqual(r.last_dash()[11], 0)
+        f = r.last_dash()
+        self.assertEqual(f[6] & 32, 0, "lock icon off")
+        self.assertEqual(f[11], 0)
 
     def test_refused_in_profile1(self):
         r = Rear()
@@ -359,20 +364,28 @@ class TractionTests(unittest.TestCase):
 
 
 class IconTests(unittest.TestCase):
-    def test_bit_mode(self):
+    def test_other_bit_configurable(self):
         r = rear_p2()
-        r.i.set("ab-icon-mode", "bit")
-        r.i.set("ab-icon-field", 0)
-        r.i.set("ab-icon-bit", 8)
+        r.i.set("ab-icon-field", 2)
+        r.i.set("ab-icon-bit", 64)
         ab_on(r)
         f = r.last_dash()
-        self.assertEqual(f[6] & 8, 8)
-        self.assertEqual(f[11], 0)
+        self.assertEqual(f[8] & 64, 64)
+        self.assertEqual(f[6] & 32, 0)
+
+    def test_icon_can_be_disabled(self):
+        r = rear_p2()
+        r.i.set("ab-icon-mode", None)
+        ab_on(r)
+        self.assertEqual(r.last_dash()[6] & 32, 0)
 
     def test_real_fault_wins(self):
         r = ab_on()
         r.v.fault = 5
-        self.assertEqual(r.last_dash()[11], 5)
+        tick(r, 4)
+        f = r.last_dash()
+        self.assertEqual(f[11], 40, "VESC FET overtemp -> 40")
+        self.assertEqual(f[6] & 32, 32, "lock icon stays")
 
     def test_ikon_teszt(self):
         r = rear_p2()

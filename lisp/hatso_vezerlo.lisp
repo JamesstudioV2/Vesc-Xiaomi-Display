@@ -19,11 +19,14 @@
 ;    nincs berúgás, álló helyzetben a kijelző az akku %-ot mutatja.
 ;  - Advanced Balance (csak 2-es profilban, KÍSÉRLETI): be/ki a fék behúzása
 ;    közben 2x gombnyomással, induláskor mindig ki van kapcsolva, bekapcsolva a
-;    csavarkulcs ikon világít. Két keréken a roller teljesen normál. Ha az eleje
+;    lakat ikon világít. Két keréken a roller teljesen normál. Ha az eleje
 ;    felemelkedik, a gáz továbbra is a nyomatékot adja, de egy szögfigyelő
 ;    szabályzó elveszi a gázt, vagy fékez is, hogy a roller ne lépje át a
 ;    beállított célszöget. Az első kerék egy laza kipörgésgátlóval nagyjából
 ;    együtt forog a hátsóval. Lekapcsol: 60° oldalra vagy 60° hátra dőlésnél.
+;  - Hibakódok a kijelzőn (gyári Xiaomi kódok, ahol van megfelelő): 14 gázkar,
+;    15 fékkar, 16 mindkét kar hibás; a VESC hibái átfordítva; táblázat: README.
+;    Lisp konzol: (hibak) - aktív hiba és előzmények.
 ;
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
@@ -115,13 +118,18 @@
 (def ab-tc-range 5.0)             ; km/h - a csúszás fölött ennyivel a gyorsabb kerék hajtása 0
 (def ab-tc-filter 0.2)            ; 0-1 - simítás (kisebb = lazább, lassabb)
 (def front-can-id -1)             ; az első vezérlő CAN ID-je, -1 = automatikus (az első talált)
-; Csavarkulcs ikon AB módban. A Xiaomi protokollban nincs rá külön bit, a
-; kijelzők a hibakód mezőhöz kötik (ilyenkor a kód is megjelenhet). Ha a
-; kijelződön mással gyullad ki, keresd meg az (ikon-teszt) paranccsal.
-(def ab-icon-mode 'error)         ; 'error = hibakód mező, 'bit = bit egy mezőben, nil = nincs
-(def ab-icon-code 88)             ; 'error módban ezt a kódot küldi, ha nincs valódi hiba
-(def ab-icon-field 0)             ; 'bit módban: 0 = mód, 2 = lámpa, 3 = sípolás mező
-(def ab-icon-bit 0)               ; 'bit módban ezt az értéket (bitet) kapcsolja be a mezőben
+; AB jelzés a kijelzőn: alapból a LAKAT ikon (a mód bájt 32-es bitje, LOCK).
+; Ha a kijelződön mással gyullad ki, keresd meg az (ikon-teszt) paranccsal.
+(def ab-icon-mode 'bit)           ; 'bit = egy bit egy mezőben, nil = nincs jelzés
+(def ab-icon-field 0)             ; 0 = mód, 2 = lámpa, 3 = sípolás mező
+(def ab-icon-bit 32)              ; a mód bájtban: 32 = lakat (LOCK)
+
+; Hibakódok (táblázat: README "Hibakódok")
+(def lever-raw-min 16)            ; a kar nyers jele (0-255) ez alatt hibás: szakadás, nincs táp
+(def lever-raw-max 235)           ; e fölött hibás: zárlat a tápra
+(def lever-fault-time 0.3)        ; s - ennyi ideig tartó hibás jel = kar hiba (14/15/16)
+(def lever-ok-time 1.0)           ; s - ennyi ideig tartó jó jel után szűnik meg
+(def error-hold-time 3.0)         ; s - egy hiba legalább ennyi ideig látszik a kijelzőn
 
 ; -> Belső állapot (ne módosítsd) -----------------------------------------------
 
@@ -194,6 +202,19 @@
 (def t-ab-err 0)
 (def icon-test-field -1)       ; (ikon-teszt) alatt: melyik mezőt kapcsolja
 (def icon-test-value 0)
+(def thr-fault nil)            ; gázkar jele hibás
+(def brk-fault nil)            ; fékkar jele hibás
+(def thr-bad-start 0)
+(def thr-ok-start 0)
+(def brk-bad-start 0)
+(def brk-ok-start 0)
+(def front-fault 0)            ; az első vezérlő VESC hibakódja (a visszajelzésből)
+(def ab-cut-time nil)          ; az utolsó AB lekapcsolás ideje (borulás, IMU), nil = még nem volt
+(def script-err-time nil)      ; az utolsó script hiba ideje, nil = még nem volt
+(def err-shown 0)              ; a kijelzőn látszó hibakód
+(def err-time 0)               ; mikor volt utoljára aktív
+(def err-last 0)               ; az előző aktív kód (új hiba felismeréséhez)
+(def err-history nil)          ; az utolsó 8 hiba: ((kód mp) ...)
 
 @const-start
 
@@ -256,6 +277,7 @@
     (if (and (= id front-ack-sid) (>= (buflen data) 2) (= (bufget-u8 data 0) 0xA5)) {
             (setq front-ack-time (systime))
             (setq front-ack-flags (bufget-u8 data 1))
+            (setq front-fault (if (>= (buflen data) 4) (bufget-u8 data 3) 0))
 }))
 
 (defun can-event-loop ()
@@ -327,11 +349,20 @@
         })
         (setq lever-frames (+ lever-frames 1))
         (setq last-lever-time (systime))
-        (if thr-gate
-            (setq thr-v
-                (if thr-gate-inv
-                    (if (> thr-v thr-gate-v) thr-v thr-gate-v)
-                    (if (< thr-v thr-gate-v) thr-v thr-gate-v))))
+        (update-lever-faults)
+        (if (or thr-fault brk-fault)
+            {
+                ; Hibás kar: nincs gáz (mint a gyári 14/15/16), hibás féknél
+                ; elektromos fék sem; a gáz a hiba után a felengedéséig fogva.
+                (setq ab-thr-lock t)
+                (setq thr-v thr-gate-v)
+                (if brk-fault (setq brk-v 0.0))
+            }
+            (if thr-gate
+                (setq thr-v
+                    (if thr-gate-inv
+                        (if (> thr-v thr-gate-v) thr-v thr-gate-v)
+                        (if (< thr-v thr-gate-v) thr-v thr-gate-v)))))
         ; Csak friss keretre írjuk felül: ha a kijelző elhallgat, a VESC
         ; timeout leállítja a motort.
         (app-adc-override 0 thr-v)
@@ -342,7 +373,6 @@
         (var spd (speed-kmh))
         (var batt (to-i (clamp (* (get-batt) 100.0) 0.0 100.0)))
         (var shown (if (and (= profile 2) (< spd p2-idle-speed)) batt (to-i (+ spd 0.5))))
-        (var fault (get-fault))
         (var beep 0)
         (if (> beep-count 0) {
                 (setq beep 1)
@@ -354,13 +384,8 @@
         (bufset-u8 tx-frame 8 (if light 1 0))
         (bufset-u8 tx-frame 9 beep)
         (bufset-u8 tx-frame 10 (clamp shown 0 255))
-        (bufset-u8 tx-frame 11
-            (cond
-                ((> fault 0) fault)
-                (front-warn front-error-code)
-                ((and ab-on (eq ab-icon-mode 'error)) ab-icon-code) ; csavarkulcs ikon
-                (t 0)))
-        (if (and ab-on (eq ab-icon-mode 'bit))
+        (bufset-u8 tx-frame 11 err-shown) ; hibakód (update-error, táblázat: README)
+        (if (and ab-on (eq ab-icon-mode 'bit)) ; AB: lakat ikon
             (bufset-u8 tx-frame (+ 6 ab-icon-field)
                 (bitwise-or (bufget-u8 tx-frame (+ 6 ab-icon-field)) ab-icon-bit)))
         (if (>= icon-test-field 0) ; (ikon-teszt)
@@ -436,7 +461,7 @@
             (setq light (not light))
             (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
         }
-        (if (>= brk-lvl ab-toggle-brake)
+        (if (and (>= brk-lvl ab-toggle-brake) (not brk-fault))
             { ; behúzott fékkel 2x: Advanced Balance be/ki
                 (button-log-msg (if ab-on "fek + 2x -> AB KI" "fek + 2x -> AB BE"))
                 (setq ab-toggle-req t) ; az AB szál kapcsol, hogy a motorparancsok ne keveredjenek
@@ -632,6 +657,7 @@
 (defun ab-stop (reason) {
         (setq ab-on nil)
         (setq ab-reason reason)
+        (if (not (eq reason 'kikapcsolva)) (setq ab-cut-time (systime)))
         (set-current 0.0)
         (if (>= ab-front-id 0) (canset-current ab-front-id 0.0))
         (setq ab-cur 0.0)
@@ -695,6 +721,7 @@
                     (if ab-on (trap (ab-stop 'script-hiba)))
                     (if (> (secs-since t-ab-err) 1.0) {
                             (setq t-ab-err (systime))
+                            (setq script-err-time (systime))
                             (print (list 'hiba-advanced-balance (cdr res)))
                     })
             })
@@ -715,11 +742,10 @@
 })
 
 ; REPL-ből hívható: (ikon-teszt) - sorban bekapcsol egy-egy bitet a kijelző
-; mezőiben, 2 s-ig mindegyiket. Figyeld, melyiknél gyullad ki a csavarkulcs,
-; és azt állítsd be: ab-icon-mode 'bit, ab-icon-field, ab-icon-bit
-; (a hibakódnál: ab-icon-mode 'error, ab-icon-code).
+; mezőiben, 2 s-ig mindegyiket. Figyeld, melyiknél mi gyullad ki, és ha a
+; lakat helyett mást szeretnél az AB jelzésére: ab-icon-field, ab-icon-bit.
 (defun ikon-teszt () {
-        (loopforeach c '((0 1) (0 8) (2 1) (2 2) (2 4) (2 8) (2 16) (2 32) (2 64) (2 128) (3 2) (5 88))
+        (loopforeach c '((0 32) (0 1) (0 8) (0 16) (2 1) (2 2) (2 4) (2 8) (2 16) (2 32) (2 64) (2 128) (3 2) (5 14))
             {
                 (print (str-merge "mezo " (str-from-n (ix c 0) "%d") ", ertek " (str-from-n (ix c 1) "%d")
                         (cond ((= (ix c 0) 0) " (mod)") ((= (ix c 0) 2) " (lampa)")
@@ -730,6 +756,139 @@
         })
         (setq icon-test-field -1)
         (print "Ikon teszt vege")
+})
+
+; -> Hibakódok
+; A kijelző hibakód mezője. Ahol van gyári Xiaomi megfelelő, azt használjuk
+; (14 gáz, 15 fék, 11-13, 18, 24, 26, 28, 31, 40), a többi saját kód 50 fölött.
+; A teljes táblázat a README "Hibakódok" fejezetében van.
+
+(defun lever-bad (raw) (or (< raw lever-raw-min) (> raw lever-raw-max)))
+
+(defun update-lever-faults () ; minden kijelzőkeretnél
+    ; a még éledő kijelző (0x0a) és az első másodperc nem számít
+    (if (and dash-ready (> (secs-since first-lever-time) 1.0)) {
+            (if (lever-bad thr-raw)
+                {
+                    (setq thr-ok-start (systime))
+                    (if (> (secs-since thr-bad-start) lever-fault-time) (setq thr-fault t))
+                }
+                {
+                    (setq thr-bad-start (systime))
+                    (if (> (secs-since thr-ok-start) lever-ok-time) (setq thr-fault nil))
+                })
+            (if (lever-bad brk-raw)
+                {
+                    (setq brk-ok-start (systime))
+                    (if (> (secs-since brk-bad-start) lever-fault-time) (setq brk-fault t))
+                }
+                {
+                    (setq brk-bad-start (systime))
+                    (if (> (secs-since brk-ok-start) lever-ok-time) (setq brk-fault nil))
+                })
+        }
+        {
+            (setq thr-bad-start (systime))
+            (setq brk-bad-start (systime))
+        })
+)
+
+(defun vesc-fault-code (f) ; VESC hibakód -> kijelző kód
+    (cond
+        ((= f 0) 0)
+        ((or (= f 1) (= f 2)) 24)                         ; túl magas / alacsony akkufeszültség
+        ((or (= f 3) (= f 7) (= f 8) (= f 19)) 28)        ; DRV, kapuvezérlő táp, BRK (MOSFET)
+        ((= f 4) 51)                                      ; abszolút túláram
+        ((= f 5) 40)                                      ; FET túlmelegedés
+        ((= f 6) 52)                                      ; motor túlmelegedés
+        ((= f 9) 56)                                      ; MCU tápfeszültség alacsony
+        ((= f 10) 31)                                     ; watchdog újraindulás
+        ((or (= f 14) (= f 23) (= f 24)) 26)              ; flash / konfiguráció sérült
+        ((= f 15) 11)                                     ; 1. áramérzékelő offset
+        ((= f 16) 12)                                     ; 2. áramérzékelő offset
+        ((= f 17) 13)                                     ; 3. áramérzékelő offset
+        ((or (= f 18) (= f 27)) 54)                       ; kiegyensúlyozatlan áram, fázisszűrő
+        ((= f 29) 55)                                     ; LV kimenet (5V/3.3V) hiba
+        ((or (= f 31) (= f 32) (= f 33)) 53)              ; túlpörgés
+        ((or (= f 11) (= f 12) (= f 13) (= f 20) (= f 21) (= f 22)
+            (= f 25) (= f 26) (= f 28) (= f 30)) 18)      ; enkóder / pozíciószenzor
+        (t 69))                                           ; egyéb (a konzol kiírja a számát)
+)
+
+(defun current-error () ; a legfontosabb aktív hiba
+    (cond
+        ((> (get-fault) 0) (vesc-fault-code (get-fault)))
+        ((and thr-fault brk-fault) 16)
+        (thr-fault 14)
+        (brk-fault 15)
+        ((and (> front-fault 0) (< (secs-since front-ack-time) 1.0)) 57)
+        (front-warn front-error-code)
+        ; események: rövid ideig aktívak, a kijelzőn az error-hold-time tartja kint
+        ((and ab-cut-time (< (secs-since ab-cut-time) 0.5)) 58)
+        ((and script-err-time (< (secs-since script-err-time) 0.5)) 59)
+        (t 0))
+)
+
+(defun error-text (code) ; csak ASCII a konzolra
+    (cond
+        ((= code 0) "nincs hiba")
+        ((= code 10) "a kijelzo nem kap valaszt (UART bekotes, script nem fut)")
+        ((= code 11) "1. aramerzekelo offset hiba")
+        ((= code 12) "2. aramerzekelo offset hiba")
+        ((= code 13) "3. aramerzekelo offset hiba")
+        ((= code 14) "gazkar jele hibas (szakadas vagy zarlat)")
+        ((= code 15) "fekkar jele hibas (szakadas vagy zarlat)")
+        ((= code 16) "gaz- es fekkar egyszerre hibas (kozos tap/GND, kabel)")
+        ((= code 18) "motor enkoder / poziciószenzor hiba")
+        ((= code 24) "akkufeszultseg tul magas vagy tul alacsony")
+        ((= code 26) "flash vagy konfiguracio serult")
+        ((= code 28) "kapuvezerlo (DRV) / MOSFET hiba")
+        ((= code 31) "a vezerlo ujraindult (watchdog)")
+        ((= code 40) "vezerlo (FET) tulmelegedes")
+        ((= code 50) "az elso vezerlo nem valaszol")
+        ((= code 51) "tularam")
+        ((= code 52) "motor tulmelegedes")
+        ((= code 53) "tulporges (sebessegkorlat hiba)")
+        ((= code 54) "kiegyensulyozatlan fazisaram / fazisszuro")
+        ((= code 55) "5V/3.3V kimenet hiba (zarlat a csatlakozon)")
+        ((= code 56) "MCU tapfeszultseg alacsony")
+        ((= code 57) "az elso vezerlo hibat jelez")
+        ((= code 58) "Advanced Balance lekapcsolt (borulas vagy IMU)")
+        ((= code 59) "script hiba (lasd a konzolt)")
+        (t "egyeb VESC hiba"))
+)
+
+(defun update-error () { ; 50 Hz, a vezérlőszálban
+        (var code (current-error))
+        (if (> code 0)
+            {
+                (if (not (= code err-last)) { ; új hiba: konzol + előzmények
+                        (print (str-merge "HIBA " (str-from-n code "%d") ": " (error-text code)
+                                (if (> (get-fault) 0)
+                                    (str-merge " (VESC hibakod " (str-from-n (get-fault) "%d") ")")
+                                    "")))
+                        (setq err-history (take (cons (list code (secs-since boot-time)) err-history) 8))
+                })
+                (setq err-shown code)
+                (setq err-time (systime))
+            }
+            (if (> (secs-since err-time) error-hold-time) (setq err-shown 0)))
+        (setq err-last code)
+})
+
+; REPL-ből hívható: (hibak) - aktív hiba, kar jelek és az utolsó 8 hiba
+(defun hibak () {
+        (var code (current-error))
+        (print (str-merge "Aktiv: " (str-from-n code "%d") " - " (error-text code)
+                ", VESC hibakod: " (str-from-n (get-fault) "%d")
+                ", elso vezerlo: " (str-from-n front-fault "%d")))
+        (print (str-merge "Gazkar nyers " (str-from-n thr-raw "%d") (if thr-fault " HIBAS" " ok")
+                ", fekkar nyers " (str-from-n brk-raw "%d") (if brk-fault " HIBAS" " ok")
+                " (jo tartomany " (str-from-n lever-raw-min "%d") "-" (str-from-n lever-raw-max "%d") ")"))
+        (print "Elozmenyek (legujabb elol):")
+        (loopforeach e err-history
+            (print (str-merge "  " (str-from-n (ix e 0) "%d") " - " (error-text (ix e 0))
+                    ", " (str-from-n (- (secs-since boot-time) (ix e 1)) "%.0f") " s-mal ezelott")))
 })
 
 ; -> Profil választás és vezérlés
@@ -755,8 +914,9 @@
 })
 
 (defun detect-step (thr) {
-        ; a gáznak folyamatosan p2-detect-hold ideig fent kell lennie
-        (if (and dash-ready (> thr p2-detect-throttle))
+        ; a gáznak folyamatosan p2-detect-hold ideig fent kell lennie, érvényes
+        ; tartományban (egy tápra zárlatos gázkar nem kapcsolhatja be a 2-es profilt)
+        (if (and dash-ready (> thr p2-detect-throttle) (not (lever-bad thr-raw)))
             (if thr-held
                 (if (> (secs-since thr-hold-start) p2-detect-hold) (choose-profile 2))
                 {
@@ -786,7 +946,7 @@
                 (if (>= spd kick-speed) (setq kick-engaged t)))
             (setq kick-engaged t))
         ; balansz után a gáz addig fogva marad, amíg el nem engedik (a fék közben működik)
-        (if (and ab-thr-lock (< thr-lvl 0.05)) (setq ab-thr-lock nil))
+        (if (and ab-thr-lock (not thr-fault) (not brk-fault) (< thr-lvl 0.05)) (setq ab-thr-lock nil))
         (setq thr-gate (or (not kick-engaged) ab-thr-lock))
 })
 
@@ -808,6 +968,7 @@
             (t (run-step spd)))
 
         (button-step)
+        (update-error)
         (lights-step)
 
         (if (> (secs-since t-front) 0.1) {
@@ -836,6 +997,7 @@
             (var res (trap (control-step)))
             (if (and (eq (car res) 'exit-error) (> (secs-since t-err) 1.0)) {
                     (setq t-err (systime))
+                    (setq script-err-time (systime))
                     (print (list 'hiba-control-step (cdr res)))
             })
             (sleep 0.02)

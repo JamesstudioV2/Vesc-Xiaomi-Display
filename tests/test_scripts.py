@@ -491,12 +491,13 @@ class DisplayTests(unittest.TestCase):
         r.boot_p1()
         r.step(int(3.0 / STEP))
         self.assertEqual(r.last_dash()[11], 50, "front ESC present but silent")
-        ack = bytearray([0xA5, 0, 100])
-        r.i.call("on-front-ack", 0x4D1, ack)
-        r.step(int(0.6 / STEP))
+        for _ in range(int(4.0 / STEP)):  # az első vezérlő válaszol, a 3 s-os tartás után eltűnik
+            r.i.call("on-front-ack", 0x4D1, bytearray([0xA5, 0, 100, 0]))
+            r.step(1)
         self.assertEqual(r.last_dash()[11], 0)
         r.v.fault = 2
-        self.assertEqual(r.last_dash()[11], 2)
+        r.step(2)
+        self.assertEqual(r.last_dash()[11], 24, "VESC undervoltage -> 24")
 
 
 class FrontTests(unittest.TestCase):
@@ -521,7 +522,7 @@ class FrontTests(unittest.TestCase):
         self.assertEqual(self.fv.conf["l-watt-max"], r.v.conf["l-watt-max"])
         sid, ack = self.fv.can_tx[-1]
         self.assertEqual(sid, 0x4D1)
-        self.assertEqual(list(ack), [0xA5, 3, 60])
+        self.assertEqual(list(ack), [0xA5, 3, 60, 0])
 
         r1 = Rear()
         r1.boot_p1()

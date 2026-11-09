@@ -30,6 +30,8 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 ## Advanced Balance (Advanced-Balance ág) – döntések
 - Csak 2-es profilban, `state` = 'run. **Be/ki: fékkar ≥ 0,5 + 2x gombnyomás** (fék nélkül a 2x továbbra is
   módváltás). Induláskor mindig ki (`ab-on` nil). Be: 2 sípolás; ki: 1; elutasítva/lekapcsolva: 3.
+  Bekapcsolva a **lakat ikon** világít (a felhasználó kérésére a csavarkulcs helyett): mód bájt |= 32 (LOCK),
+  a sebességmód bitjei, a sebesség és az akku megmaradnak (`ab-icon-mode` 'bit, `ab-icon-field` 0, `ab-icon-bit` 32).
   A kapcsolást a gomb csak kéri (`ab-toggle-req`), az AB szál hajtja végre, hogy a motorparancsok ne keveredjenek.
 - Bekapcsolva az ADC app kimenete tiltva, a script vezérli **mindkét motort** 100 Hz-en (`ab-thread`):
   - gáz/fék: `get-adc-decoded` (VESC Tool kalibráció) → gáz − fék → holtjáték (`adc-thr-hyst`) →
@@ -47,9 +49,7 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - Lekapcsolás (motorok elengednek, AB ki, gázzár a felengedésig): roll > 60°, szög > 60° (hátra) vagy < −60°
   (előre, a felhasználó csak oldalra/hátra kérte, de baleset esetén ez is), nincs IMU adat. Sebességkorlát NINCS.
   Nincs kijelzőkeret → nincs gáz/fék, de az AB bekapcsolva marad.
-- Csavarkulcs ikon: a protokollban nincs külön bit (1zun4, lucidnx, Koxx3 SmartESC: mód, akku, lámpa, sípolás,
-  sebesség, hibakód). Alap: `ab-icon-mode` 'error, hibakód 88. Alternatíva 'bit + `ab-icon-field`/`ab-icon-bit`.
-  `(ikon-teszt)` végigkapcsolja a jelölteket, a felhasználónak kell megnéznie, mi gyújtja ki.
+- Az `(ikon-teszt)` végigkapcsolja a jelölt biteket (elsőként a lakatot), ha a kijelzőn mást kellene választani.
 - Felfedezett eltérés (még nincs javítva egyik ágon sem): a lucidnx mérései szerint a lámpa mező a gyári
   vezérlőtől 0x64 (6-os bit), a mi kódunk 1-et küld; a D módot a gyári 0-val jelzi, mi 1-gyel. Visszajelzés kell.
 - Modell (`tools/balansz_modell.py`): Kp 10 / Kd 1,5 / 1000 A/s mellett 0,3–1,2 Nm/A-nél megfogja a teljes gázos
@@ -58,6 +58,19 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - `tests/test_advanced_balance.py`: 35 teszt, benne zárt hurkú: korlát nélkül átfordul → 60°-nál lekapcsol;
   korláttal 10°-os célnál < 15°; 15 km/h-s 60°/s felrántás < 30°.
 
+## Hibakódok (Advanced-Balance ág) – döntések
+- A kijelző hibakód mezője (`err-shown`) a vezérlőszálban (`update-error`, 50 Hz) számolódik. Prioritás: VESC hiba →
+  16/14/15 kar hiba → 57 első vezérlő hibája → 50 első nem válaszol → 58 AB lekapcsolás → 59 script hiba.
+  Minden kód legalább `error-hold-time` 3 s-ig kint marad. Új hibánál konzol: `HIBA nn: ...`, előzmény (utolsó 8).
+- Kar hiba: a nyers kijelzőérték < `lever-raw-min` 16 vagy > `lever-raw-max` 235 0,3 s-ig (a még éledő kijelző 0x0a-ja
+  és az első 1 s nem számít). Ilyenkor nincs gáz (override = ADC start), hibás féknél fék sincs (0 V), gázzár a
+  felengedésig; megszűnés 1 s jó jel után. 14 gáz, 15 fék, 16 mindkettő (közös táp). Hibás gázzal a P2 nem kapcsolható
+  (a felhasználói teszt egy tápra zárlatos gázkarnál P2-t választott, javítva), hibás fékkel az AB sem.
+- VESC hibák fordítása (`vesc-fault-code`): 1,2→24; 3,7,8,19→28; 4→51; 5→40; 6→52; 9→56; 10→31; 14,23,24→26;
+  15/16/17→11/12/13; 18,27→54; 29→55; 31–33→53; enkóder (11–13,20–22,25,26,28,30)→18; egyéb→69. Táblázat: README „Hibakódok”.
+- Az első vezérlő a visszajelzés 4. bájtjában küldi a saját `get-fault`-ját (a régi 3 bájtos ack-kal is működik) → 57.
+- REPL: `(hibak)`. Tesztek: `tests/test_errors.py` (18).
+
 ## Fájlok
 - `lisp/hatso_vezerlo.lisp`: fő script (kijelző, gomb, lámpák, profilok, berúgás, első vezérlő vezérlése).
 - `lisp/elso_vezerlo.lisp`: az első vezérlő scriptje (korlátok CAN-ről, failsafe tiltás).
@@ -65,7 +78,7 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - `docs/referencia-elemzes.md`: a referenciaprojektek elemzése, protokoll, 7.00-s firmware tudnivalók.
 - `docs/bekotes.svg`: bekötési rajz.
 - `tools/lisp_check.py` + `tools/fw7_00_symbols.txt`: statikus ellenőrző (`python3 tools/lisp_check.py lisp/*.lisp`).
-- `tests/lbm_sim.py` + `tests/test_scripts.py` + `tests/test_advanced_balance.py`: LispBM-részhalmaz szimulátor és tesztek
+- `tests/lbm_sim.py` + `tests/test_scripts.py` + `tests/test_advanced_balance.py` + `tests/test_errors.py`: szimulátor és tesztek
   (`python3 -m unittest discover -s tests`).
 - `tools/balansz_modell.py`: az Advanced Balance szögkorlátjának modellje.
 
@@ -100,7 +113,9 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   Módosítva (felhasználói kérés): gázkitartás 70%, 30 km/h-nál sípolás + lejjebb engedés (nem nullára), kilépés 35-nél.
   69 teszt átmegy.
 - 2026-11-09: **Advanced-Balance ág** létrehozva a Balance ágból (részletek fent). 78 teszt átmegy.
-  A felhasználónak: (szog), irányteszt felemelt hátsó kerékkel, (ikon-teszt) a csavarkulcshoz.
+  A felhasználónak: (szog), irányteszt felemelt hátsó kerékkel.
+- 2026-11-09: Advanced-Balance: lakat ikon a csavarkulcs helyett; hibakód-rendszer (14/15/16 kar hibák, VESC hibák
+  gyári/saját kódokra, első vezérlő hibája, 3 s tartás, `(hibak)`), táblázat a README-ben. 97 teszt átmegy.
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).

@@ -210,10 +210,63 @@ a firmware újraindítja az appokat, és közben a lámpák és a gomb lábait i
 Ha a konzolon `hiba-control-step` jelenik meg, másold ki és küldd el: a script
 hiba esetén is fut tovább, de a hibát jelezni kell.
 
-| Kijelző hibakód | Jelentés |
-|---|---|
-| 50 | van első vezérlő a CAN-en, de nem válaszol, vagy nem a kért állapotban van (nincs rajta a script?) |
-| egyéb | VESC hibakód (`get-fault`), pl. 1 = túlfeszültség, 2 = alacsony feszültség, 3 = DRV, 4 = abs. túláram, 5 = FET túlmelegedés, 6 = motor túlmelegedés |
+A kijelzőn megjelenő hibakódok jelentése a [Hibakódok](#hibakódok) fejezetben van.
+
+## Hibakódok
+
+A kijelző a hibakódot ugyanúgy mutatja, mint a gyári vezérlőnél. Ahol van
+gyári Xiaomi megfelelő, a script azt a kódot küldi (pl. 14 = gázkar,
+15 = fékkar). A VESC saját hibáit is ilyen kódokra fordítja, a gyári listában
+nem szereplő hibák 50 fölötti saját kódot kapnak.
+
+- Egy hiba **legalább 3 másodpercig** látszik (`error-hold-time`), akkor is, ha
+  közben megszűnt. Így a pillanatnyi hibák is leolvashatók.
+- Ha egyszerre több hiba van, a legfontosabb látszik: VESC hiba → kar hiba →
+  első vezérlő → események.
+- Minden új hiba megjelenik a **Lisp konzolon** is (`HIBA 14: gazkar jele
+  hibas ...`, VESC hibánál a VESC kód számával).
+- A konzolban a **`(hibak)`** parancs kiírja az aktív hibát, a karok nyers
+  jelét és az utolsó 8 hibát (mikor volt).
+
+| Kód | Jelentés | Forrás | Mit nézz meg |
+|---|---|---|---|
+| 10 | A kijelző nem kap választ a vezérlőtől | a kijelző saját kódja | UART bekötés (sárga → TX), fut-e a script, App to Use = ADC |
+| 11 / 12 / 13 | 1. / 2. / 3. áramérzékelő offset hiba | VESC 15 / 16 / 17 | a vezérlő áramérzékelője; motor nélkül is jön? |
+| **14** | **Gázkar jele hibás** (szakadás vagy zárlat) | script | gázkar csatlakozója és kábele a kijelzőben, `(hibak)` nyers értéke |
+| **15** | **Fékkar jele hibás** (szakadás vagy zárlat) | script | fékkar csatlakozója és kábele a kijelzőben |
+| **16** | **Gáz- és fékkar egyszerre hibás** | script | a karok közös tápja / GND-je a kijelzőben, a kijelző kábele |
+| 18 | Motor enkóder / pozíciószenzor hiba | VESC 11–13, 20–22, 25, 26, 28, 30 | szenzor kábel, Sensor Mode beállítás |
+| 24 | Akkufeszültség túl magas vagy túl alacsony | VESC 1, 2 | akku töltöttség, a feszültséghatárok a VESC Tool-ban |
+| 26 | Flash / konfiguráció sérült | VESC 14, 23, 24 | írd újra a konfigurációt, firmware újratöltés |
+| 28 | Kapuvezérlő (DRV) / MOSFET hiba | VESC 3, 7, 8, 19 | a vezérlő hardvere, motor fáziskábelek zárlata |
+| 31 | A vezérlő újraindult (watchdog) | VESC 10 | firmware/script lefagyás, tápellátás |
+| 40 | Vezérlő (FET) túlmelegedés | VESC 5 | hűtés, áramkorlátok |
+| 50 | Az első vezérlő nem válaszol | script | CAN kábel, fut-e rajta az `elso_vezerlo.lisp` |
+| 51 | Túláram | VESC 4 | motor detektálás, áramkorlátok, fázisok |
+| 52 | Motor túlmelegedés | VESC 6 | motor hőmérséklet-szenzor, áramkorlátok |
+| 53 | Túlpörgés hiba | VESC 31, 32, 33 | General → Advanced → Additional faults (legyen kikapcsolva) |
+| 54 | Kiegyensúlyozatlan fázisáram / fázisszűrő hiba | VESC 18, 27 | motor fáziskábelek, csatlakozók |
+| 55 | 5V / 3.3V kimenet hiba | VESC 29 | zárlat a COMM csatlakozón (kijelző, lámpa MOSFET bekötése) |
+| 56 | MCU tápfeszültség alacsony | VESC 9 | a vezérlő tápellátása |
+| 57 | Az első vezérlő hibát jelez | az első vezérlő | csatlakozz az első vezérlőhöz a VESC Tool-ban (CAN), nézd meg a hibáját |
+| 58 | Az Advanced Balance lekapcsolt | script | borulás (60°) vagy nincs IMU adat, ld. `(status)` utolsó kilépés |
+| 59 | Script hiba | script | a Lisp konzol `hiba-...` sora |
+| 69 | Egyéb VESC hiba | VESC (más) | a konzol kiírja a VESC hibakód számát |
+
+**Kar hibák (14 / 15 / 16):** a kijelző a karok jelét 0–255 közötti értékként
+küldi. Ép karnál ez kb. 40 (elengedve) és 200 (tövig) között van. Ha a jel
+0,3 másodpercig a `lever-raw-min` (16) alatt vagy a `lever-raw-max` (235)
+fölött van, az szakadás vagy zárlat. Ilyenkor, mint a gyári vezérlőnél:
+- nincs gáz (hibás féknél sem, mert akkor nem lehetne elektromosan fékezni);
+- hibás fékkarnál az elektromos fék sincs, csak a mechanikus;
+- a hiba megszűnése után a jelnek 1 másodpercig jónak kell lennie, a gáz pedig
+  csak az elengedése után működik újra;
+- hibás gázkarral a 2-es profil nem kapcsolható be, és az Advanced Balance
+  sem hibás fékkarral.
+
+Az 57-es kódhoz az első vezérlőre is az új `elso_vezerlo.lisp` kell, mert az
+küldi el a saját hibakódját a visszajelzésben. A régi verzióval is működik
+minden, csak az 57-es kód nem jelenik meg.
 
 ## Első próba (felemelt kerékkel)
 
@@ -245,7 +298,7 @@ balanszer. Kevesebb gázzal az eleje lejjebb ereszkedik: a gáz a te kezedben
 marad, a rendszer csak felülről korlátoz. Sebességkorlátja nincs.
 
 **Be- és kikapcsolás:** csak a **2-es profilban**, a **fékkar behúzása közben 2x
-gombnyomással**. Bekapcsoláskor 2 sípolás szól, és a kijelzőn a **csavarkulcs
+gombnyomással**. Bekapcsoláskor 2 sípolás szól, és a kijelzőn a **lakat
 ikon** világít. Kikapcsoláskor 1 sípolás szól. Minden bekapcsoláskor
 (indulásnál) ki van kapcsolva. Fék nélkül a 2x gombnyomás továbbra is
 módváltás.
@@ -306,21 +359,19 @@ A Lisp konzolban: `(szog)`. Öt másodpercig kiírja a nyers roll/pitch értéke
 3. Vízszintes rollernél a nyers szöget írd be: `(def balance-level-offset ...)`.
    Utána vízszintesen ~0°-ot, felemelt elejével pozitív szöget kell mutatnia.
 
-### Csavarkulcs ikon
+### Lakat ikon
 
-A Xiaomi kijelzőprotokollban nincs külön bit a csavarkulcsra. Három független
-megvalósítás (1zun4, lucidnx, Koxx3 SmartESC) is csak a mód, akku, lámpa,
-sípolás, sebesség és hibakód mezőket ismeri. A Xiaomi kijelzők a csavarkulcsot
-a **hibakódhoz** kötik, ezért alapból a hibakód mezőbe kerül egy kód
-(`ab-icon-code`, 88). Ilyenkor a kijelző a kódot is mutathatja. Ha a
-kijelződön ez zavaró, vagy nem a csavarkulcs gyullad ki:
-- Írd be a konzolba: `(ikon-teszt)`. 2 másodpercenként egy-egy bitet kapcsol be a
-  mód, a lámpa és a sípolás mezőben, a végén a hibakódot. A konzol kiírja,
-  melyik fut éppen. Figyeld, melyiknél gyullad ki a csavarkulcs.
-- Ha egy bitnél kigyullad, állítsd be: `(def ab-icon-mode 'bit)`,
-  `(def ab-icon-field ...)` (a mező száma), `(def ab-icon-bit ...)` (az érték).
-- Ha csak a hibakóddal megy, maradjon `'error`. Ha egyáltalán nem kell:
-  `(def ab-icon-mode nil)`.
+Bekapcsolt Advanced Balance-nál a kijelzőn a **lakat ikon** világít: a script
+a mód bájt 32-es bitjét (LOCK) kapcsolja be a sebességmód mellé, a sebesség
+és az akku ugyanúgy látszik. A gyári vezérlő a zárolt állapotot ezzel a bittel
+jelzi.
+- Ha a kijelződön a lakat mellett más is történik (pl. eltűnik a sebesség),
+  vagy más ikont szeretnél, írd be a konzolba: `(ikon-teszt)`. 2
+  másodpercenként egy-egy bitet kapcsol be (elsőként a lakatot), a konzol
+  kiírja, melyik fut éppen. A választott bitet így állítsd be:
+  `(def ab-icon-field ...)` (0 = mód, 2 = lámpa, 3 = sípolás mező) és
+  `(def ab-icon-bit ...)`.
+- Ha nem kell jelzés: `(def ab-icon-mode nil)`.
 
 Ez a teszt arra is jó, hogy kiderüljön, a lámpa ikon nálad melyik bitre
 gyullad: a lucidnx mérései szerint a gyári vezérlő a lámpa mezőbe 0x64-et küld
@@ -376,9 +427,12 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `temp-warn-fet`, `temp-warn-motor`: a hőfok ikon határai.
 - `front-enabled`, `p1-front-brake`: az első vezérlő használata, és hogy az
   1-es profilban fékezzen-e az első motor (alapból nem, csak a hátsó dolgozik).
+- `lever-raw-min`, `lever-raw-max`, `lever-fault-time`, `lever-ok-time`,
+  `error-hold-time`: a kar hibák (14/15/16) határai és a hibakód kijelzési
+  ideje ([Hibakódok](#hibakódok)).
 - `ab-...` és `balance-axis`/`-invert`/`-level-offset`: az Advanced Balance
   beállításai (célszög, erősítések, áramváltozás, hátramenet, lekapcsolási
-  szögek, be/ki fékküszöb, gázgörbe, kipörgésgátló, csavarkulcs ikon), mind
+  szögek, be/ki fékküszöb, gázgörbe, kipörgésgátló, lakat ikon), mind
   magyarázattal a script elején.
 
 ## Bluetooth (VESC Tool)

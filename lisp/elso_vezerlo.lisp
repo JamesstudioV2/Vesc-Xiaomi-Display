@@ -47,6 +47,7 @@
             (bufset-u8 ack 0 0xA5)
             (bufset-u8 ack 1 cur-flags)
             (bufset-u8 ack 2 cur-scale)
+            (bufset-u8 ack 3 (get-fault)) ; a saját VESC hibakód, a hátsó kijelzi (57)
             (can-send-sid ack-sid ack)
 }))
 
@@ -64,7 +65,7 @@
 )
 
 (defun init () {
-        (def ack (bufcreate 3))
+        (def ack (bufcreate 4))
         (apply-limits 0 0 250 5) ; induláskor tiltva, amíg a hátsó nem szól
         (event-register-handler (spawn event-loop))
         (event-enable 'event-can-sid)

@@ -559,6 +559,8 @@ class Interp:
             "eq": lambda a, b: lbool(a == b),
             "list": lambda *a: list(a),
             "car": lambda lst: lst[0] if lst else None,
+            "cons": lambda a, b: [a] + list(b or []),
+            "take": lambda lst, n: list(lst or [])[:n],
             "cdr": lambda lst: lst[1:] if lst else None,
             "ix": lambda lst, i: lst[i],
             "length": lambda lst: len(lst or []),
