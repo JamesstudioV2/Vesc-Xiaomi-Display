@@ -17,10 +17,13 @@
 ;    3 km/h-s berúgás kell az induláshoz.
 ;  - 2-es profil: bekapcsoláskor nyomva tartott gázkarral. Mindkét motor megy,
 ;    nincs berúgás, álló helyzetben a kijelző az akku %-ot mutatja.
-;  - Balansz mód (csak 2-es profilban, KÍSÉRLETI): álló rollernél, felemelt
-;    elejével gáz + fék tövig 1 másodpercig -> a hátsó motor az IMU alapján
-;    tartja a szöget (egykerekezés), az első motor áll. Kilépés: gáz elengedése
-;    vagy a fék újbóli behúzása, utána 2 s-ig nem indítható újra.
+;  - Advanced Balance (csak 2-es profilban, KÍSÉRLETI): be/ki a fék behúzása
+;    közben 2x gombnyomással, induláskor mindig ki van kapcsolva, bekapcsolva a
+;    csavarkulcs ikon világít. Két keréken a roller teljesen normál. Ha az eleje
+;    felemelkedik, a gáz továbbra is a nyomatékot adja, de egy szögfigyelő
+;    szabályzó elveszi a gázt, vagy fékez is, hogy a roller ne lépje át a
+;    beállított célszöget. Az első kerék egy laza kipörgésgátlóval nagyjából
+;    együtt forog a hátsóval. Lekapcsol: 60° oldalra vagy 60° hátra dőlésnél.
 ;
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
@@ -83,37 +86,42 @@
 
 (def beep-on-start t)          ; induláskor sípol: 1x = 1-es profil, 2x = 2-es profil
 
-; Balansz mód (egykerekezés a hátsó keréken) - csak 2-es profilban. KÍSÉRLETI!
-; Az alapértékek egy egyszerű modellből becsültek, a rolleredre hangolni kell
-; (README: "Balansz mód"). A szög: fok, az eleje emelésekor nő, vízszintesen 0.
-(def balance-enabled t)
+; Advanced Balance - csak 2-es profilban. KÍSÉRLETI!
+; Be/ki: fékkar behúzva + 2x gombnyomás. Induláskor mindig ki van kapcsolva.
+; Az alapértékek egy egyszerű modellből becsültek (tools/balansz_modell.py),
+; a rolleredre hangolni kell (README: "Advanced Balance").
+; A szög: fok, az eleje emelésekor nő, vízszintes rollernél 0 (ld. (szog)).
 (def balance-axis 1)              ; IMU tengely a get-imu-rpy listából: 0 = roll, 1 = pitch
 (def balance-invert nil)          ; t, ha az eleje emelésekor a nyers szög csökken
 (def balance-level-offset 0.0)    ; fok - ennyit mutat a nyers szög vízszintes rollernél
-(def balance-start-min 10.0)      ; fok - indításhoz legalább ennyire legyen fent az eleje
-(def balance-start-max 35.0)      ; fok - és legfeljebb ennyire
-(def balance-max-start-speed 1.0) ; km/h - csak álló helyzetből indul
-(def balance-activate-level 0.9)  ; gáz és fék legalább ennyi (0-1)...
-(def balance-activate-time 1.0)   ; s - ...ennyi ideig egyszerre
-(def balance-hold-level 0.7)      ; a gáz e fölött (70%) tartja a balansz módot
-(def balance-brake-level 0.3)     ; a fék e fölött (felengedése után) kilép
-(def balance-cooldown 2.0)        ; s - kilépés után ennyi ideig nem indul újra
-(def balance-kp 8.0)              ; A / fok - arányos tag
-(def balance-ki 0.0)              ; A / (fok*s) - integráló tag
-(def balance-kd 1.0)              ; A / (fok/s) - differenciáló tag (csillapítás)
-(def balance-max-current 40.0)    ; A - fázisáram korlát (a VESC Tool limitje is érvényes)
-(def balance-slew 400.0)          ; A/s - az áram legnagyobb változási sebessége
-(def balance-ramp-in 0.3)         ; s - indításkor ennyi idő alatt jön fel a szabályzás
-(def balance-land-angle 4.0)      ; fok - ez alatt az eleje leért: kilép
-(def balance-max-angle 50.0)      ; fok - e fölött hátraborulás veszélye: kilép
-(def balance-max-roll 30.0)       ; fok - oldalra dőlés: kilép
-(def balance-max-speed 30.0)      ; km/h - e fölött sípol és lejjebb engedi az elejét (de nem teszi le)
-(def balance-cutoff-speed 35.0)   ; km/h - e fölött kilép
-(def balance-max-reverse 3.0)     ; km/h - ennél gyorsabb hátramenet: kilép
-(def balance-land-rate 15.0)      ; fok/s - sebességkorlátnál ilyen gyorsan változik a célszög
-(def balance-limit-drop 10.0)     ; fok - sebességkorlátnál legfeljebb ennyivel engedi lejjebb az elejét
-(def balance-limit-min-angle 8.0) ; fok - de ennél lejjebb soha (a leszállás 4°-nál van)
-(def balance-limit-beep 0.5)      ; s - sebességkorlátnál ilyen időközönként sípol
+(def ab-target-angle 20.0)        ; fok - CÉLSZÖG: az elejét e fölé nem engedi
+                                  ;   (a balanszpontnál ne legyen nagyobb, és jóval nagyobb
+                                  ;   legyen a legmeredekebb emelkedőnél, amin jársz)
+(def ab-engage-angle 3.0)         ; fok - ez alatt (két keréken) a szabályzó nem szól bele
+(def ab-kp 10.0)                  ; A / fok - arányos tag
+(def ab-kd 1.5)                   ; A / (fok/s) - differenciáló tag (a gyors emelkedést előre fékezi)
+(def ab-slew 1000.0)              ; A/s - a hátsó áram legnagyobb változási sebessége
+(def ab-max-reverse 3.0)          ; km/h - a szögkorlát eddig tolathat hátra, ennél gyorsabban nem
+(def ab-cutoff-roll 60.0)         ; fok - ennyi oldalra dőlésnél lekapcsol
+(def ab-cutoff-pitch 60.0)        ; fok - ennyi hátradőlésnél lekapcsol
+(def ab-toggle-brake 0.5)         ; a be/ki kapcsoláshoz a fékkar legalább ennyire (0-1) legyen behúzva
+(def ab-throttle-exp 0.0)         ; gázgörbe AB módban (a VESC Tool görbéje helyett), 0 = lineáris
+(def ab-brake-exp 0.0)            ; fékgörbe AB módban, 0 = lineáris
+(def ab-curve-mode 0)             ; görbe típusa: 0 = exponenciális, 1 = természetes, 2 = polinom
+; Kipörgésgátló az első és a hátsó kerék között (csak AB módban). A két kerék
+; azonos legyen (a canget-speed a hátsó vezérlő kerékadataival számol).
+(def ab-tc-enabled t)
+(def ab-tc-slip 3.0)              ; km/h - eddig a sebességkülönbségig nem szól bele
+(def ab-tc-range 5.0)             ; km/h - a csúszás fölött ennyivel a gyorsabb kerék hajtása 0
+(def ab-tc-filter 0.2)            ; 0-1 - simítás (kisebb = lazább, lassabb)
+(def front-can-id -1)             ; az első vezérlő CAN ID-je, -1 = automatikus (az első talált)
+; Csavarkulcs ikon AB módban. A Xiaomi protokollban nincs rá külön bit, a
+; kijelzők a hibakód mezőhöz kötik (ilyenkor a kód is megjelenhet). Ha a
+; kijelződön mással gyullad ki, keresd meg az (ikon-teszt) paranccsal.
+(def ab-icon-mode 'error)         ; 'error = hibakód mező, 'bit = bit egy mezőben, nil = nincs
+(def ab-icon-code 88)             ; 'error módban ezt a kódot küldi, ha nincs valódi hiba
+(def ab-icon-field 0)             ; 'bit módban: 0 = mód, 2 = lámpa, 3 = sípolás mező
+(def ab-icon-bit 0)               ; 'bit módban ezt az értéket (bitet) kapcsolja be a mezőben
 
 ; -> Belső állapot (ne módosítsd) -----------------------------------------------
 
@@ -163,25 +171,29 @@
 (def thr-end 2.0)
 (def brk-start 0.8)
 (def brk-end 2.0)
-(def bal-state 'off)           ; 'off, 'arming, 'on, 'limit (sebességkorlát)
-(def bal-arm-start 0)
-(def bal-start-time 0)
-(def bal-exit-time 0)
-(def bal-last-time 0)
-(def bal-angle 0.0)
+(def bal-angle 0.0)            ; IMU szög (fok), az eleje emelésekor nő
 (def bal-roll 0.0)
 (def bal-imu-ok nil)
 (def bal-prev-angle 0.0)
-(def bal-rate 0.0)
-(def bal-setpoint 0.0)
-(def bal-base-setpoint 0.0)      ; a bekapcsoláskori célszög
-(def bal-beep-time 0)
-(def bal-integral 0.0)
-(def bal-current 0.0)
-(def bal-brake-released nil)
-(def bal-thr-lock nil)         ; balansz után a gáz a felengedéséig fogva marad
-(def bal-reason 'nincs)        ; az utolsó kilépés oka
-(def t-bal-err 0)
+(def bal-rate 0.0)             ; szögsebesség (fok/s), szűrt
+(def ab-on nil)                ; Advanced Balance - induláskor mindig ki
+(def ab-toggle-req nil)        ; a gomb kérése, az AB szál hajtja végre
+(def ab-last-time 0)
+(def ab-pwr 0.0)               ; rámpázott gáz-fék (-1..1), mint az ADC appban
+(def ab-cur 0.0)               ; a hátsó motor áramparancsa (A)
+(def ab-lim 1000.0)            ; a szögkorlát (A), diagnosztika
+(def ab-imax 30.0)             ; a hátsó motor aktuális max árama (A)
+(def ab-ramp-pos 0.3)
+(def ab-ramp-neg 0.1)
+(def ab-hyst 0.15)
+(def ab-front-id -1)
+(def ab-tc-front 1.0)          ; kipörgésgátló szorzók (1 = nincs beavatkozás)
+(def ab-tc-rear 1.0)
+(def ab-thr-lock nil)          ; lekapcsolás után a gáz a felengedéséig fogva marad
+(def ab-reason 'nincs)         ; az utolsó lekapcsolás oka
+(def t-ab-err 0)
+(def icon-test-field -1)       ; (ikon-teszt) alatt: melyik mezőt kapcsolja
+(def icon-test-value 0)
 
 @const-start
 
@@ -196,19 +208,16 @@
 
 (defun speed-kmh () (abs (* (get-speed) 3.6)))
 
+(defun min2 (a b) (if (< a b) a b))
+
 (defun mode-limits (prof mode)
     (if (= prof 2)
         (cond ((= mode 2) p2-eco) ((= mode 4) p2-sport) (t p2-drive))
         (cond ((= mode 2) p1-eco) ((= mode 4) p1-sport) (t p1-drive)) ; 0 = még nincs profil -> 1-es
 ))
 
-(defun balancing () (or (eq bal-state 'on) (eq bal-state 'limit)))
-
 (defun front-flags () ; bit0 = hajtás, bit1 = fék
-    (cond
-        ((balancing) 0) ; balansz: az első motor nem csinál semmit
-        ((= profile 2) 3)
-        (t (if p1-front-brake 2 0)))
+    (if (= profile 2) 3 (if p1-front-brake 2 0))
 )
 
 ; -> Módok és az első vezérlő
@@ -345,7 +354,19 @@
         (bufset-u8 tx-frame 8 (if light 1 0))
         (bufset-u8 tx-frame 9 beep)
         (bufset-u8 tx-frame 10 (clamp shown 0 255))
-        (bufset-u8 tx-frame 11 (if (> fault 0) fault (if front-warn front-error-code 0)))
+        (bufset-u8 tx-frame 11
+            (cond
+                ((> fault 0) fault)
+                (front-warn front-error-code)
+                ((and ab-on (eq ab-icon-mode 'error)) ab-icon-code) ; csavarkulcs ikon
+                (t 0)))
+        (if (and ab-on (eq ab-icon-mode 'bit))
+            (bufset-u8 tx-frame (+ 6 ab-icon-field)
+                (bitwise-or (bufget-u8 tx-frame (+ 6 ab-icon-field)) ab-icon-bit)))
+        (if (>= icon-test-field 0) ; (ikon-teszt)
+            (bufset-u8 tx-frame (+ 6 icon-test-field)
+                (if (= icon-test-field 5) icon-test-value
+                    (bitwise-or (bufget-u8 tx-frame (+ 6 icon-test-field)) icon-test-value))))
         (var sum 0)
         (looprange i 2 12 (setq sum (+ sum (bufget-u8 tx-frame i))))
         (var crc (bitwise-xor sum 0xFFFF))
@@ -415,8 +436,11 @@
             (setq light (not light))
             (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
         }
-        (if (balancing)
-            (button-log-msg "balansz alatt nincs modvaltas") ; az áramkorlátot nem vesszük el
+        (if (>= brk-lvl ab-toggle-brake)
+            { ; behúzott fékkel 2x: Advanced Balance be/ki
+                (button-log-msg (if ab-on "fek + 2x -> AB KI" "fek + 2x -> AB BE"))
+                (setq ab-toggle-req t) ; az AB szál kapcsol, hogy a motorparancsok ne keveredjenek
+            }
             { ; 2 vagy több nyomás: D -> S -> ECO -> D
                 (setq speedmode (cond ((= speedmode 1) 4) ((= speedmode 4) 2) (t 1)))
                 (apply-mode)
@@ -485,11 +509,13 @@
         (gpio-write 'pin-adc2 (if light 1 0))
 })
 
-; -> Balansz mód (egykerekezés, csak 2-es profilban)
-; A hátsó motor egy PID szabályzóval tartja a roller dőlésszögét, mint egy
-; önegyensúlyozó jármű: ha az eleje lejjebb kerül a célszögnél, gyorsít (ez
-; visszaemeli), ha feljebb, fékez. A sebességet a versenyző a testsúlyával
-; adja (előre dőlve gyorsít, hátra dőlve lassít). Saját szálon fut 100 Hz-en.
+; -> Advanced Balance (csak 2-es profilban)
+; Bekapcsolva a script vezérli mindkét motort 100 Hz-en (az ADC app kimenete
+; tiltva). A gáz és a fék ugyanúgy jut a motorokhoz, mint az ADC appban
+; (kalibráció, holtjáték, görbe, rámpa), de a hátsó motor áramát a szögkorlát
+; felülről korlátozza: min(gáz, korlát). A korlát a célszög alatt nagy, a
+; célszög körül 0-ra csökken, fölötte negatív (fékez). Két keréken (a szög az
+; ab-engage-angle alatt) nem szól bele. A fék mindig a normál fék.
 
 (defun read-imu () {
         (var rpy (get-imu-rpy))
@@ -502,152 +528,208 @@
                     (* (ix acc 2) (ix acc 2))) 0.09))
 })
 
-(defun balance-can-arm ()
-    (and balance-enabled (= profile 2) (eq state 'run) bal-imu-ok
-        (< (secs-since last-lever-time) 0.3)
-        (> (secs-since bal-exit-time) balance-cooldown)
-        (< (speed-kmh) balance-max-start-speed)
-        (>= bal-angle balance-start-min)
-        (<= bal-angle balance-start-max)
-        (< (abs bal-roll) balance-max-roll)
-        (= (get-fault) 0)
-        (>= thr-lvl balance-activate-level)
-        (>= brk-lvl balance-activate-level))
-)
-
-(defun balance-start () {
-        (setq bal-setpoint (clamp bal-angle balance-start-min balance-start-max))
-        (setq bal-base-setpoint bal-setpoint)
-        (setq bal-integral 0.0)
-        (setq bal-current 0.0)
-        (setq bal-prev-angle bal-angle)
-        (setq bal-rate 0.0)
-        (setq bal-brake-released nil)
-        (setq bal-start-time (systime))
-        (setq bal-last-time (systime))
-        (setq bal-state 'on)
-        ; Az ADC app kimenete tiltva: a hátsó motort innen vezéreljük, az első
-        ; motor így nem kap parancsot (és a CAN üzenet is tiltja, front-flags).
-        (app-disable-output -1)
-        ; teljes fázisáram, és a VESC sebességkorlátja ne vágjon bele a
-        ; balansz saját sebességkorlátja előtt (kilépéskor a mód korlátai visszaállnak)
-        (conf-set 'l-current-max-scale 1.0)
-        (conf-set 'max-speed (/ (+ balance-cutoff-speed 5.0) 3.6))
-        (setq beep-count 2)
-        (print (list 'balansz-be 'celszog bal-setpoint))
-})
-
-(defun balance-stop (reason) {
-        (setq bal-state 'off)
-        (setq bal-exit-time (systime))
-        (setq bal-reason reason)
-        (setq bal-thr-lock t) ; a gáz a felengedéséig fogva marad, a fék működik
-        (setq thr-gate t)
-        (set-current 0.0)
-        (setq bal-current 0.0)
-        (apply-mode-limits)
-        (app-disable-output 0)
-        (setq beep-count 1)
-        (print (list 'balansz-ki reason))
-})
-
-(defun balance-control (dt spd) {
-        ; Sebességkorlát: sípol, és a célszöget lassan lejjebb viszi (a lejjebb
-        ; engedett eleje fékezéssel jár), de nem teszi le. 2 km/h-val a korlát
-        ; alatt a célszög visszaáll a bekapcsoláskorira.
-        (if (and (eq bal-state 'on) (> spd balance-max-speed)) (setq bal-state 'limit))
-        (if (and (eq bal-state 'limit) (< spd (- balance-max-speed 2.0))) (setq bal-state 'on))
-        (var target (if (eq bal-state 'limit)
-                (if (> (- bal-base-setpoint balance-limit-drop) balance-limit-min-angle)
-                    (- bal-base-setpoint balance-limit-drop)
-                    balance-limit-min-angle)
-                bal-base-setpoint))
-        (var sstep (* balance-land-rate dt))
-        (setq bal-setpoint (+ bal-setpoint (clamp (- target bal-setpoint) (- 0.0 sstep) sstep)))
-        (if (and (eq bal-state 'limit) (> (secs-since bal-beep-time) balance-limit-beep)) {
-                (setq bal-beep-time (systime))
-                (setq beep-count 1)
-        })
-        (var err (- bal-setpoint bal-angle)) ; + = az eleje lejjebb van -> gyorsítani kell
-        (var ilim (if (> balance-ki 0.0) (/ (* 0.5 balance-max-current) balance-ki) 0.0))
-        (setq bal-integral (clamp (+ bal-integral (* err dt)) (- 0.0 ilim) ilim))
-        (var out (- (+ (* balance-kp err) (* balance-ki bal-integral)) (* balance-kd bal-rate)))
-        (var ramp (if (> balance-ramp-in 0.0)
-                (clamp (/ (secs-since bal-start-time) balance-ramp-in) 0.0 1.0)
-                1.0))
-        (setq out (clamp (* out ramp) (- 0.0 balance-max-current) balance-max-current))
-        (var step (* balance-slew dt))
-        (setq bal-current (+ bal-current (clamp (- out bal-current) (- 0.0 step) step)))
-        (set-current bal-current 0.05)
-})
-
-(defun balance-step () {
-        (read-imu)
-        (var dt (clamp (secs-since bal-last-time) 0.001 0.05))
-        (setq bal-last-time (systime))
+(defun update-rate (dt) {
         (setq bal-rate (+ bal-rate (* 0.3 (- (/ (- bal-angle bal-prev-angle) dt) bal-rate))))
         (setq bal-prev-angle bal-angle)
-        (var spd (* (get-speed) 3.6)) ; előjeles: hátramenet negatív
-        (if (< brk-lvl 0.2) (setq bal-brake-released t))
-        (cond
-            ((< thr-lvl balance-hold-level) (balance-stop 'gaz-elengedve))
-            ((and bal-brake-released (> brk-lvl balance-brake-level)) (balance-stop 'fek))
-            ((and (not bal-brake-released) (> (secs-since bal-start-time) 2.0)) (balance-stop 'fek-nincs-elengedve))
-            ((> (secs-since last-lever-time) 0.3) (balance-stop 'nincs-kijelzo))
-            ((not (= (get-fault) 0)) (balance-stop 'vezerlo-hiba))
-            ((not bal-imu-ok) (balance-stop 'imu))
-            ((> bal-angle balance-max-angle) (balance-stop 'tul-nagy-szog))
-            ((> (abs bal-roll) balance-max-roll) (balance-stop 'oldaldoles))
-            ((< spd (- 0.0 balance-max-reverse)) (balance-stop 'hatramenet))
-            ((> spd balance-cutoff-speed) (balance-stop 'tul-gyors))
-            ((< bal-angle balance-land-angle) (balance-stop 'leszallt))
-            (t (balance-control dt spd)))
 })
 
-(defun balance-arm-step ()
-    (if (balance-can-arm)
-        (if (eq bal-state 'arming)
-            (if (> (secs-since bal-arm-start) balance-activate-time) (balance-start))
-            {
-                (setq bal-state 'arming)
-                (setq bal-arm-start (systime))
-            })
-        (setq bal-state 'off))
+(defun ab-refresh () ; 0,5 s-onként: a VESC Tool beállításai és az első vezérlő ID-je
+    {
+        (setq ab-imax (* (conf-get 'l-current-max) (conf-get 'l-current-max-scale)))
+        (setq ab-ramp-pos (conf-get 'adc-ramp-time-pos))
+        (setq ab-ramp-neg (conf-get 'adc-ramp-time-neg))
+        (setq ab-hyst (conf-get 'adc-thr-hyst))
+        (setq ab-front-id
+            (cond
+                ((not front-enabled) -1)
+                ((>= front-can-id 0) front-can-id)
+                (t {
+                        (var devs (can-list-devs))
+                        (if devs (car devs) -1)
+                    })))
+})
+
+(defun ab-deadband (x h) ; mint a VESC utils_deadband
+    (cond
+        ((< (abs x) h) 0.0)
+        ((> x 0.0) (/ (- x h) (- 1.0 h)))
+        (t (/ (+ x h) (- 1.0 h))))
 )
 
-(defun balance-tick ()
-    (if (balancing)
-        (balance-step)
+(defun ab-target-pwr () ; gáz - fék, a VESC Tool kalibrációja, holtjáték és görbe után
+    (if (< (secs-since last-lever-time) 0.3)
+        (throttle-curve (ab-deadband (- (get-adc-decoded 0) (get-adc-decoded 1)) ab-hyst)
+            ab-throttle-exp ab-brake-exp ab-curve-mode)
+        0.0) ; nincs kijelzőkeret: se gáz, se fék
+)
+
+(defun ab-tc-factor (excess) ; a gyorsabb kerék hajtásának szorzója
+    (clamp (- 1.0 (/ (- excess ab-tc-slip) ab-tc-range)) 0.0 1.0)
+)
+
+(defun ab-traction () {
+        (var kf 1.0)
+        (var kr 1.0)
+        (if (and ab-tc-enabled (>= ab-front-id 0)) {
+                (var d (* 3.6 (- (canget-speed ab-front-id) (get-speed)))) ; + = az első gyorsabb
+                (setq kf (ab-tc-factor d))
+                (setq kr (ab-tc-factor (- 0.0 d)))
+        })
+        (setq ab-tc-front (+ ab-tc-front (* ab-tc-filter (- kf ab-tc-front))))
+        (setq ab-tc-rear (+ ab-tc-rear (* ab-tc-filter (- kr ab-tc-rear))))
+})
+
+(defun ab-limit () ; a hátsó motor legnagyobb árama a szög alapján (A)
+    (if (> bal-angle ab-engage-angle)
+        {
+            (var lim (- (* ab-kp (- ab-target-angle bal-angle)) (* ab-kd bal-rate)))
+            ; hátrafelé csak ab-max-reverse km/h-ig fékezhet/tolathat
+            (if (and (< lim 0.0) (< (* (get-speed) 3.6) (- 0.0 ab-max-reverse))) 0.0 lim)
+        }
+        1000.0)
+)
+
+(defun ab-drive (dt) {
+        (var target (ab-target-pwr))
+        ; rámpa, mint az ADC appban: növekvő erőnél ramp-pos, csökkenőnél ramp-neg
+        (var rt (if (> (abs target) (abs ab-pwr)) ab-ramp-pos ab-ramp-neg))
+        (if (> rt 0.01)
+            (setq ab-pwr (+ ab-pwr (clamp (- target ab-pwr) (- 0.0 (/ dt rt)) (/ dt rt))))
+            (setq ab-pwr target))
+        (ab-traction)
+        (setq ab-lim (ab-limit))
+        (if (>= ab-pwr 0.0)
+            { ; gáz: a hátsót a szögkorlát felülről korlátozza (akár fékezésig)
+                (var want (min2 (* ab-pwr ab-imax ab-tc-rear) ab-lim))
+                (var step (* ab-slew dt))
+                (setq ab-cur (+ ab-cur (clamp (- want ab-cur) (- 0.0 step) step)))
+                (set-current ab-cur 0.05)
+                (if (>= ab-front-id 0) (canset-current-rel ab-front-id (* ab-pwr ab-tc-front) 0.05))
+            }
+            { ; fék: normál fék mindkét motoron
+                (var b (- 0.0 ab-pwr))
+                (setq ab-cur (* ab-pwr ab-imax)) ; csak kijelzéshez / féklámpához
+                (set-brake-rel b)
+                (if (>= ab-front-id 0) (canset-brake-rel ab-front-id b))
+            })
+})
+
+(defun ab-start () {
+        (ab-refresh)
+        (setq ab-pwr (ab-target-pwr)) ; rámpa nélkül vesszük át: a fék nem gyengül
+        (setq ab-cur 0.0)
+        (setq ab-tc-front 1.0)
+        (setq ab-tc-rear 1.0)
+        (setq bal-prev-angle bal-angle)
+        (setq bal-rate 0.0)
+        (setq ab-last-time (systime))
+        (setq ab-on t)
+        (app-disable-output -1) ; mostantól a script vezérli mindkét motort
+        (setq beep-count 2)
+        (print (list 'advanced-balance-be 'celszog ab-target-angle 'elso-id ab-front-id))
+})
+
+(defun ab-stop (reason) {
+        (setq ab-on nil)
+        (setq ab-reason reason)
+        (set-current 0.0)
+        (if (>= ab-front-id 0) (canset-current ab-front-id 0.0))
+        (setq ab-cur 0.0)
+        (setq ab-lim 1000.0)
+        (if (> thr-lvl 0.05) { ; a gáz a felengedéséig fogva marad
+                (setq ab-thr-lock t)
+                (setq thr-gate t)
+        })
+        (app-disable-output 0) ; vissza az ADC app-ra
+        (setq beep-count (if (eq reason 'kikapcsolva) 1 3))
+        (print (list 'advanced-balance-ki reason))
+})
+
+(defun ab-toggle () ; fékkar behúzva + 2x gombnyomás
+    (cond
+        (ab-on (ab-stop 'kikapcsolva))
+        ((not (= profile 2)) {
+                (setq beep-count 3)
+                (button-log-msg "AB csak 2-es profilban")
+        })
+        ((not (eq state 'run)) (setq beep-count 3))
+        ((not bal-imu-ok) {
+                (setq beep-count 3)
+                (button-log-msg "AB: nincs IMU adat")
+        })
+        (t (ab-start)))
+)
+
+(defun ab-step () {
+        (read-imu)
+        (var dt (clamp (secs-since ab-last-time) 0.001 0.05))
+        (setq ab-last-time (systime))
+        (update-rate dt)
+        (cond
+            ((> (abs bal-roll) ab-cutoff-roll) (ab-stop 'oldaldoles))
+            ((> bal-angle ab-cutoff-pitch) (ab-stop 'hatradoles))
+            ((< bal-angle (- 0.0 ab-cutoff-pitch)) (ab-stop 'eloredoles))
+            ((not bal-imu-ok) (ab-stop 'imu))
+            (t (ab-drive dt)))
+})
+
+(defun ab-tick () {
+    (if ab-toggle-req {
+            (setq ab-toggle-req nil)
+            (ab-toggle)
+    })
+    (if ab-on
+        (ab-step)
         {
             (read-imu)
-            (balance-arm-step)
+            (var dt (clamp (secs-since ab-last-time) 0.001 0.05))
+            (setq ab-last-time (systime))
+            (update-rate dt)
         })
-)
+})
 
-(defun balance-thread ()
+(defun ab-thread ()
     (loopwhile t {
-            (var res (trap (balance-tick)))
+            (var res (trap (ab-tick)))
             (if (eq (car res) 'exit-error) {
-                    (if (balancing) (trap (balance-stop 'script-hiba)) (setq bal-state 'off))
-                    (if (> (secs-since t-bal-err) 1.0) {
-                            (setq t-bal-err (systime))
-                            (print (list 'hiba-balansz (cdr res)))
+                    (if ab-on (trap (ab-stop 'script-hiba)))
+                    (if (> (secs-since t-ab-err) 1.0) {
+                            (setq t-ab-err (systime))
+                            (print (list 'hiba-advanced-balance (cdr res)))
                     })
             })
             (sleep 0.01)
 }))
 
-; REPL-ből hívható: (szog) - 5 másodpercig írja a nyers és a balansz szöget
+; REPL-ből hívható: (szog) - 5 másodpercig írja a nyers és a számolt szöget
 (defun szog () {
-        (print "Szog teszt 5 s: emeld meg a roller elejet, a balansz szognek nonie kell")
+        (print "Szog teszt 5 s: emeld meg a roller elejet, a szognek nonie kell")
         (looprange i 0 25 {
                 (var rpy (get-imu-rpy))
                 (print (str-merge "roll " (str-from-n (rad2deg (ix rpy 0)) "%.1f")
                         "  pitch " (str-from-n (rad2deg (ix rpy 1)) "%.1f")
-                        "  -> balansz szog " (str-from-n bal-angle "%.1f")
+                        "  -> szog " (str-from-n bal-angle "%.1f")
                         (if bal-imu-ok "" "  (NINCS IMU ADAT)")))
                 (sleep 0.2)
         })
+})
+
+; REPL-ből hívható: (ikon-teszt) - sorban bekapcsol egy-egy bitet a kijelző
+; mezőiben, 2 s-ig mindegyiket. Figyeld, melyiknél gyullad ki a csavarkulcs,
+; és azt állítsd be: ab-icon-mode 'bit, ab-icon-field, ab-icon-bit
+; (a hibakódnál: ab-icon-mode 'error, ab-icon-code).
+(defun ikon-teszt () {
+        (loopforeach c '((0 1) (0 8) (2 1) (2 2) (2 4) (2 8) (2 16) (2 32) (2 64) (2 128) (3 2) (5 88))
+            {
+                (print (str-merge "mezo " (str-from-n (ix c 0) "%d") ", ertek " (str-from-n (ix c 1) "%d")
+                        (cond ((= (ix c 0) 0) " (mod)") ((= (ix c 0) 2) " (lampa)")
+                            ((= (ix c 0) 3) " (sipolas)") (t " (hibakod)"))))
+                (setq icon-test-value (ix c 1))
+                (setq icon-test-field (ix c 0))
+                (sleep 2.0)
+        })
+        (setq icon-test-field -1)
+        (print "Ikon teszt vege")
 })
 
 ; -> Profil választás és vezérlés
@@ -704,8 +786,8 @@
                 (if (>= spd kick-speed) (setq kick-engaged t)))
             (setq kick-engaged t))
         ; balansz után a gáz addig fogva marad, amíg el nem engedik (a fék közben működik)
-        (if (and bal-thr-lock (not (balancing)) (< thr-lvl 0.05)) (setq bal-thr-lock nil))
-        (setq thr-gate (or (not kick-engaged) bal-thr-lock))
+        (if (and ab-thr-lock (< thr-lvl 0.05)) (setq ab-thr-lock nil))
+        (setq thr-gate (or (not kick-engaged) ab-thr-lock))
 })
 
 (defun control-step () {
@@ -714,7 +796,7 @@
         (var thr (if fresh (get-adc-decoded 0) 0.0))
         (var brk (if fresh (get-adc-decoded 1) 0.0))
         (var was-braking braking)
-        (setq braking (or (> brk brake-level) (and (balancing) (< bal-current -5.0))))
+        (setq braking (or (> brk brake-level) (and ab-on (< ab-cur -5.0))))
         (if (and braking (not was-braking)) { ; fékezés kezdete: azonnal kialszik, utána villog
                 (setq blink-on nil)
                 (setq blink-time (systime))
@@ -742,6 +824,7 @@
                 (gpio-configure 'pin-adc2 'pin-mode-out)
                 (gpio-configure button-pin 'pin-mode-in-pu)
                 (refresh-gate)
+                (ab-refresh)
                 (update-temp-warn)
                 (update-front-warn)
         })
@@ -768,8 +851,10 @@
             (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses
                 'lampa light)
             (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn)
-            (list 'balansz bal-state 'szog bal-angle 'oldal bal-roll 'cel bal-setpoint
-                'aram bal-current 'imu bal-imu-ok 'utolso-kilepes bal-reason 'gaz-zar bal-thr-lock)
+            (list 'ab ab-on 'szog bal-angle 'oldal bal-roll 'cel ab-target-angle 'korlat ab-lim
+                'aram ab-cur 'gaz-fek ab-pwr 'imax ab-imax)
+            (list 'tc-elso ab-tc-front 'tc-hatso ab-tc-rear 'elso-id ab-front-id 'imu bal-imu-ok
+                'utolso-kilepes ab-reason 'gaz-zar ab-thr-lock)
 )))
 
 (defun init () {
@@ -805,7 +890,8 @@
         (uart-start 115200 'half-duplex)
         (gpio-configure button-pin 'pin-mode-in-pu)
         (spawn 200 rx-thread)
-        (spawn 200 balance-thread)
+        (ab-refresh)
+        (spawn 200 ab-thread)
 })
 
 (defun main () {

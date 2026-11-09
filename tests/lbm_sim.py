@@ -133,6 +133,8 @@ class Vesc:
             "adc-v2-start": 0.8, "adc-v2-end": 2.0,
             "max-speed": 30.0, "l-watt-max": 1500000.0,
             "l-current-max-scale": 1.0, "l-current-min-scale": 1.0,
+            "l-current-max": 60.0, "l-current-min": -60.0,
+            "adc-ramp-time-pos": 0.3, "adc-ramp-time-neg": 0.1, "adc-thr-hyst": 0.0,
         }
         self.conf_log = []
         self.gpio_mode = {"pin-rx": "uart-af", "pin-tx": "uart-af"}
@@ -154,6 +156,9 @@ class Vesc:
         self.imu_rpy = [0.0, 0.0, 0.0]   # radians
         self.imu_acc = [0.0, 0.0, 1.0]   # g
         self.motor_current = None        # last set-current
+        self.motor_brake = None          # last set-brake-rel
+        self.can_cmds = []               # (kind, id, value) canset-* parancsok
+        self.can_speed = {}              # id -> m/s (canget-speed)
         self.motor_log = []
         self.sleep_budget = None   # number of sleeps before Blocked is raised
         self.fail_temp = False     # get-temp-fet raises an error
@@ -502,8 +507,39 @@ class Interp:
 
         def set_current(amps, off_delay=None):
             v.motor_current = float(num(amps))
+            v.motor_brake = None
             v.motor_log.append((v.now, v.motor_current))
             return True
+
+        def set_brake_rel(x):
+            v.motor_brake = float(num(x))
+            v.motor_current = None
+            return True
+
+        def can_cmd(kind):
+            def f(i, x, off_delay=None):
+                v.can_cmds.append((kind, i, float(num(x))))
+                return True
+            return f
+
+        def throttle_curve(val, acc, brk, mode):  # VESC utils_throttle_curve
+            val = max(-1.0, min(1.0, num(val)))
+            a = abs(val)
+            c = acc if val >= 0 else brk
+            if mode == 0:
+                r = 1.0 - (1.0 - a) ** (1.0 + c) if c >= 0 else a ** (1.0 - c)
+            elif mode == 1:
+                if abs(c) < 1e-10:
+                    r = a
+                elif c >= 0:
+                    r = 1.0 - ((math.exp(c * (1.0 - a)) - 1.0) / (math.exp(c) - 1.0))
+                else:
+                    r = (math.exp(-c * a) - 1.0) / (math.exp(-c) - 1.0)
+            elif mode == 2:
+                r = 1.0 - ((1.0 - a) / (1.0 + c * a)) if c >= 0 else a / (1.0 - c * (1.0 - a))
+            else:
+                r = a
+            return -r if val < 0 else r
 
         def get_temp_fet():
             if v.fail_temp:
@@ -563,6 +599,13 @@ class Interp:
             "get-imu-acc": lambda: list(v.imu_acc),
             "rad2deg": lambda x: math.degrees(num(x)),
             "set-current": set_current,
+            "set-brake-rel": set_brake_rel,
+            "canset-current-rel": can_cmd("current-rel"),
+            "canset-current": can_cmd("current"),
+            "canset-brake-rel": can_cmd("brake-rel"),
+            "canget-speed": lambda i: v.can_speed.get(i, v.speed_ms),
+            "throttle-curve": throttle_curve,
+            "bitwise-or": lambda a, b: num(a) | num(b),
             "get-temp-mot": lambda: v.temp_mot,
             "get-batt": lambda: v.batt,
             "get-fault": lambda: v.fault,

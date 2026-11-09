@@ -6,8 +6,9 @@ Ez a fájl a projekt állapotjegyzete. Minden Claude Code munkamenet automatikus
 ## Cél
 Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 
-**Ez a `Balance` ág:** a `main` + a kísérleti **balansz mód** (egykerekes indulás a hátsó keréken).
-A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
+**Ez az `Advanced-Balance` ág** (a felhasználó „Advanced Balance”-nek hívta, a git nem enged szóközt):
+a `Balance` ágból indult, de a régi balansz mód (gáz + fék 1 s) helyett az **Advanced Balance** van benne.
+A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 
 ## Hardver és döntések (rögzítve)
 - Firmware: **VESC 7.00** mindkét vezérlőn.
@@ -26,25 +27,36 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   P2 (bekapcsoláskor nyomva tartott gáz) = mindkét motor, nincs berúgás, S korlátlan, D korlátlan sebesség 60% fázisárammal, álló helyzetben akku % a kijelzőn.
 - **Becsült, a felhasználó által nem megadott értékek:** P1 D = 20 km/h/300 W, P2 ECO = 25 km/h/50%, P1-ben az első motor fék nélkül, módsorrend D→S→ECO, hosszú gombnyomásnak nincs funkciója, induló mód D.
 
-## Balansz mód (Balance ág) – döntések
-- Csak 2-es profilban, `state` = 'run, álló helyzetben (< 1 km/h), szög 10–35° (roll < 30°), IMU adat van,
-  gáz ÉS fék ≥ 0,9 egyszerre 1,0 s-ig, és a legutóbbi kilépés óta eltelt 2 s (cooldown).
-- Bekapcsoláskor: ADC app kimenet tiltva (`app-disable-output -1`), a hátsó motort a script `set-current`-tel vezérli
-  egy saját szálon 100 Hz-en (`balance-thread`). Az első motor flags = 0 (CAN üzenet), és ADC parancsot sem kap.
-  Az `l-current-max-scale` 1,0, a `max-speed` = balansz-korlát + 10 km/h; kilépéskor `apply-mode-limits` visszaállítja.
-- Szabályzó: PD (Ki = 0 alapból), célszög = a bekapcsoláskori szög. Kp 8 A/fok, Kd 1,0, 40 A, 400 A/s, 0,3 s felfutás.
-  Hiba + = az eleje lejjebb van → pozitív áram (gyorsít). A deriváltat a szög numerikus deriváltjából számolja (LP 0,3).
-- Kilépés: gáz < 0,7 (70%, a felhasználó kérése); a fék újbóli behúzása (> 0,3, a felengedése után); a fék 2 s-on belül nincs elengedve; a szög < 4°
-  (leszállt); > 50°; roll > 30°; hátramenet > 3 km/h; > 35 km/h (`balance-cutoff-speed`); nincs kijelzőkeret 0,3 s; VESC hiba; nincs IMU adat;
-  script hiba. 30 km/h fölött 'limit: 0,5 s-onként sípol, a célszög 15°/s-mal csökken, legfeljebb 10°-kal
-  (min. 8°), NEM teszi le; 28 km/h alatt vissza 'on, a célszög visszaáll. VESC `max-speed` = 35 + 5 km/h.
-- Kilépés után: ADC app vissza (a fék működik), a gáz `bal-thr-lock`-kal fogva, amíg el nem engedik (`thr-lvl` < 0,05).
-- `thr-lvl`/`brk-lvl`: a nyers kijelzőértékből, a VESC Tool ADC kalibrációja szerint, a gázfogástól függetlenül.
-- Balansz alatt a módváltás tiltva, a lámpa kapcsolható. A féklámpa villog, ha az áram < −5 A.
-- Az első vezérlő flag-váltása után 1 s türelmi idő van a 50-es hibakód előtt (`front-flags-time`).
-- REPL: `(szog)` a tengely/előjel/vízszint beállításához; `(status)` utolsó sora a balansz állapota.
-- `tools/balansz_modell.py`: a modell, amiből az alapértékek jöttek. `tests/test_balance.py`: 24 teszt, benne zárt hurkú
-  teszt a modellel (Kt 0,3/0,5/0,8 tartja; rossz előjellel leesik).
+## Advanced Balance (Advanced-Balance ág) – döntések
+- Csak 2-es profilban, `state` = 'run. **Be/ki: fékkar ≥ 0,5 + 2x gombnyomás** (fék nélkül a 2x továbbra is
+  módváltás). Induláskor mindig ki (`ab-on` nil). Be: 2 sípolás; ki: 1; elutasítva/lekapcsolva: 3.
+  A kapcsolást a gomb csak kéri (`ab-toggle-req`), az AB szál hajtja végre, hogy a motorparancsok ne keveredjenek.
+- Bekapcsolva az ADC app kimenete tiltva, a script vezérli **mindkét motort** 100 Hz-en (`ab-thread`):
+  - gáz/fék: `get-adc-decoded` (VESC Tool kalibráció) → gáz − fék → holtjáték (`adc-thr-hyst`) →
+    `throttle-curve` (`ab-throttle-exp`, a VESC Tool görbéje nem olvasható) → rámpa (`adc-ramp-time-pos/neg`,
+    ugyanaz a logika, mint az ADC appban). Bekapcsoláskor rámpa nélkül veszi át (a fék nem gyengül).
+  - fék (pwr < 0): `set-brake-rel` hátul, `canset-brake-rel` elöl → teljesen normál fék.
+  - gáz (pwr ≥ 0): hátsó áram = min(pwr × Imax × tc-hátsó, korlát), slew 1000 A/s, `set-current`;
+    első: `canset-current-rel` pwr × tc-első. Imax = `l-current-max` × `l-current-max-scale` (a mód szerint).
+  - korlát (csak ha a szög > `ab-engage-angle` 3°): Kp 10 × (célszög − szög) − Kd 1,5 × szögsebesség (A).
+    Negatív = fékez. Hátrafelé csak `ab-max-reverse` 3 km/h-ig (a modellben enélkül elszabadult a tolatás).
+  - célszög: `ab-target-angle` (alap 20°), a kódban kézzel. Abszolút IMU-szög → emelkedőn is számít (doksiban).
+  - kipörgésgátló: a gyorsabb kerék hajtása `ab-tc-slip` 3 km/h fölött csökken, + `ab-tc-range` 5 km/h-nál 0,
+    szűrés `ab-tc-filter` 0,2. `canget-speed` a hátsó kerékadataival számol (azonos kerekek kellenek).
+  - első vezérlő ID: `front-can-id` vagy az első a `can-list-devs`-ből.
+- Lekapcsolás (motorok elengednek, AB ki, gázzár a felengedésig): roll > 60°, szög > 60° (hátra) vagy < −60°
+  (előre, a felhasználó csak oldalra/hátra kérte, de baleset esetén ez is), nincs IMU adat. Sebességkorlát NINCS.
+  Nincs kijelzőkeret → nincs gáz/fék, de az AB bekapcsolva marad.
+- Csavarkulcs ikon: a protokollban nincs külön bit (1zun4, lucidnx, Koxx3 SmartESC: mód, akku, lámpa, sípolás,
+  sebesség, hibakód). Alap: `ab-icon-mode` 'error, hibakód 88. Alternatíva 'bit + `ab-icon-field`/`ab-icon-bit`.
+  `(ikon-teszt)` végigkapcsolja a jelölteket, a felhasználónak kell megnéznie, mi gyújtja ki.
+- Felfedezett eltérés (még nincs javítva egyik ágon sem): a lucidnx mérései szerint a lámpa mező a gyári
+  vezérlőtől 0x64 (6-os bit), a mi kódunk 1-et küld; a D módot a gyári 0-val jelzi, mi 1-gyel. Visszajelzés kell.
+- Modell (`tools/balansz_modell.py`): Kp 10 / Kd 1,5 / 1000 A/s mellett 0,3–1,2 Nm/A-nél megfogja a teljes gázos
+  emelést és a menet közbeni 80°/s-os felrántást; 400 A/s-mal erős motornál túllendült/átfordult.
+  Balanszpont mögötti célszögnél átfordul (fizikai korlát, doksiban).
+- `tests/test_advanced_balance.py`: 35 teszt, benne zárt hurkú: korlát nélkül átfordul → 60°-nál lekapcsol;
+  korláttal 10°-os célnál < 15°; 15 km/h-s 60°/s felrántás < 30°.
 
 ## Fájlok
 - `lisp/hatso_vezerlo.lisp`: fő script (kijelző, gomb, lámpák, profilok, berúgás, első vezérlő vezérlése).
@@ -53,7 +65,9 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 - `docs/referencia-elemzes.md`: a referenciaprojektek elemzése, protokoll, 7.00-s firmware tudnivalók.
 - `docs/bekotes.svg`: bekötési rajz.
 - `tools/lisp_check.py` + `tools/fw7_00_symbols.txt`: statikus ellenőrző (`python3 tools/lisp_check.py lisp/*.lisp`).
-- `tests/lbm_sim.py` + `tests/test_scripts.py`: LispBM-részhalmaz szimulátor és tesztek (`python3 -m unittest discover -s tests`).
+- `tests/lbm_sim.py` + `tests/test_scripts.py` + `tests/test_advanced_balance.py`: LispBM-részhalmaz szimulátor és tesztek
+  (`python3 -m unittest discover -s tests`).
+- `tools/balansz_modell.py`: az Advanced Balance szögkorlátjának modellje.
 
 ## Állapot
 - 2026-11-09: Repó létrehozva. A korábbi beszélgetés kódja elveszett, újrakezdés.
@@ -82,9 +96,11 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   A README kapott egy „Bluetooth (VESC Tool)” szakaszt a VESC Express ajánlással. Opcionális bővítésként felajánlva:
   Xiaomi-kompatibilis appok (pl. m365 Tools) támogatása a kijelző BLE-jén (adatok, lámpa, mód; VESC-beállítást nem tud).
 
-- 2026-11-09: **Balance ág** létrehozva: balansz mód (egykerekes indulás), részletek fent. 67 teszt átmegy.
+- 2026-11-09: **Balance ág** létrehozva: balansz mód (egykerekes indulás). 67 teszt átmegy.
   Módosítva (felhasználói kérés): gázkitartás 70%, 30 km/h-nál sípolás + lejjebb engedés (nem nullára), kilépés 35-nél.
-  69 teszt átmegy. A felhasználónak irányteszt kell felemelt hátsó kerékkel (README „Első próbák”), utána óvatos hangolás.
+  69 teszt átmegy.
+- 2026-11-09: **Advanced-Balance ág** létrehozva a Balance ágból (részletek fent). 78 teszt átmegy.
+  A felhasználónak: (szog), irányteszt felemelt hátsó kerékkel, (ikon-teszt) a csavarkulcshoz.
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
