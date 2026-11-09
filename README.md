@@ -12,6 +12,11 @@ script kezeli.
 | [`docs/referencia-elemzes.md`](docs/referencia-elemzes.md) | a hasonló projektek elemzése, protokoll-leírás |
 | [`tests/`](tests/) | szimulátoros tesztek (a script logikája PC-n futtatva) |
 | [`tools/lisp_check.py`](tools/lisp_check.py) | statikus ellenőrző a 7.00-s firmware függvénylistája alapján |
+| [`tools/balansz_modell.py`](tools/balansz_modell.py) | durva fizikai modell a balansz mód erősítéseinek becsléséhez |
+
+> **Ez a `Balance` ág.** A `main` ághoz képest a **balansz mód** (egykerekes
+> indulás, [leírás lent](#balansz-mód-kísérleti)) van benne. **Kísérleti**, valódi
+> rolleren még nincs kipróbálva.
 
 > ⚠️ **Saját felelősségre.** Egy hibás beállítás vagy bekötés váratlan gyorsulást
 > vagy fékvesztést okozhat. Az első próbákat mindig **felemelt kerékkel** végezd.
@@ -224,6 +229,108 @@ hiba esetén is fut tovább, de a hibát jelezni kell.
 6. A `(status)` paranccsal ellenőrizd, hogy az első vezérlő válaszol-e
    (`elso-hiba` = nil).
 
+## Balansz mód (kísérleti)
+
+> ⚠️ **Kísérleti funkció, valódi rolleren még nincs kipróbálva.** Egy hibás
+> beállítás (rossz tengely vagy előjel, túl nagy erősítés) hátraborulást vagy
+> az eleje lecsapódását okozhatja. Csak védőfelszerelésben, üres, sík
+> területen próbáld, a lenti lépések sorrendjében.
+
+Egykerekes indulás a hátsó keréken: a roller a hátsó motorral tartja a dőlésszöget,
+a gázt és a féket a versenyző helyett adja. Az első motor ilyenkor áll.
+
+**Hogyan működik:** mint egy önegyensúlyozó jármű. Ha az eleje lejjebb kerül a
+célszögnél, a hátsó motor gyorsít, és ez visszaemeli. Ha feljebb kerül, a motor
+fékez. A sebességet a versenyző a testsúlyával adja: előre dőlve a roller
+gyorsít, hátra dőlve lassít. Egy rögzített szöget csak a balanszpontnál lehet
+állandó sebességgel tartani, előrébb álló súlyponttal a roller folyamatosan
+gyorsul. Ezért van sebességkorlát.
+
+**Bekapcsolás** (minden feltételnek egyszerre kell teljesülnie):
+1. **2-es profil** (bekapcsoláskor nyomva tartott gáz).
+2. A roller **áll** (1 km/h alatt).
+3. Az eleje fel van emelve: a dőlésszög **10° és 35° között** van, oldalra
+   legfeljebb 30°-ot dől.
+4. **Gáz és fék egyszerre tövig, 1 másodpercig.** Utána 2 sípolás jelzi a
+   balansz módot. A célszög a bekapcsolás pillanatában mért szög.
+5. **Engedd el a féket**, a gázt tartsd nyomva.
+
+**Kilépés:**
+- a **gáz elengedése** (a gázkar 30% alá), vagy
+- a **fék újbóli behúzása** (a felengedése után), vagy
+- ha a féket 2 másodpercen belül nem engeded el.
+
+Kilépéskor 1 sípolás szól, a vezérlés visszakerül a normál módba (a fék azonnal
+működik), a gáz pedig **a felengedéséig hatástalan**, hogy ne lőjön ki a
+roller. Kilépés után **2 másodpercig** nem lehet újra bekapcsolni.
+
+**Biztonsági kilépések** (mindegyik paraméterezhető):
+
+| Feltétel | Alapérték | Mi történik |
+|---|---|---|
+| az eleje leért | 4° alatt | kilép |
+| túl nagy szög (hátraborulás veszélye) | 50° fölött | kilép |
+| oldalra dőlés | 30° fölött | kilép |
+| sebességkorlát | 20 km/h fölött | a célszöget 15°/s-mal csökkenti, így leteszi az elejét |
+| túl gyors | 25 km/h fölött | azonnal kilép |
+| hátramenet | 3 km/h fölött | kilép |
+| nincs kijelzőkeret, VESC hiba, nincs IMU adat | | kilép |
+
+A balansz alatt a dupla gombnyomásos módváltás le van tiltva (az áramkorlátot
+nem csökkentheti menet közben), a lámpa kapcsolható. A féklámpa villog, ha a
+szabályzó fékez.
+
+### Előfeltétel: IMU a hátsó vezérlőben
+
+A hátsó VESC-nek kell, hogy legyen IMU-ja (gyorsulásmérő + giroszkóp), beépítve
+vagy külső modulként. A VESC Tool-ban: **App Settings → IMU**:
+- **IMU Type:** a vezérlőn lévő IMU (ha `Off`, a balansz nem indul).
+- **AHRS Mode:** `Madgwick Fusion`. A balansz alatt a roller folyamatosan
+  gyorsul vagy lassul, ez elhúzhatja a gyorsulásmérőből számolt szöget. Az
+  **Accel Confidence Decay** csökkenti ezt a hatást (ugyanúgy, mint a
+  balance board-oknál).
+- Futtasd a giroszkóp kalibrációt (a roller álljon mozdulatlanul).
+- A vezérlő legyen mereven rögzítve, a rezgés zavarja a szögmérést.
+
+### Szögkalibráció
+
+A Lisp konzolban: `(szog)`. Öt másodpercig kiírja a nyers roll/pitch értékeket
+és a számolt balansz szöget.
+1. Vízszintes rollernél nézd meg, melyik tengely változik, amikor megemeled
+   az elejét. Ha a `roll`, állítsd a script elején `(def balance-axis 0)`-ra
+   (alapból `1` = pitch).
+2. Ha az eleje emelésekor a szög **csökken**, állítsd: `(def balance-invert t)`.
+3. Vízszintes rollernél a nyers szög értékét írd be ide:
+   `(def balance-level-offset ...)`. Ezután vízszintesen ~0°-ot, felemelt
+   elejével pozitív szöget kell mutatnia.
+
+A `(status)` utolsó sora mutatja a balansz állapotát, a szöget, a célszöget, az
+áramot és az utolsó kilépés okát.
+
+### Első próbák (ebben a sorrendben)
+
+1. **Irányteszt felemelt hátsó kerékkel.** Állítsd a scriptben
+   `(def balance-max-current 5.0)`-ra. Támaszd alá a rollert úgy, hogy a hátsó
+   kerék szabadon forogjon, és a váz ~20°-ban álljon. Kapcsold be a balanszot
+   (2-es profil, gáz + fék 1 s, utána a fék el). Ha a vázat **lejjebb**
+   döntöd, a hátsó keréknek **előre** kell forognia, ha **feljebb**, akkor
+   fékeznie vagy hátra forognia. Ha fordítva csinálja, **ne menj tovább**:
+   javítsd a `balance-invert` beállítást.
+2. **Óvatos próba a földön.** Állítsd vissza az áramkorlátot (40 A), legyen
+   veled valaki, és legyen rajtad védőfelszerelés. Az első alkalmakkor csak
+   pár méter, kis szöggel. Kilépni a gáz elengedésével tudsz.
+3. **Hangolás:**
+   - ha az eleje lassan lesüllyed, és a roller nem tudja tartani: `balance-kp`
+     növelése (pl. 8 → 10 → 12);
+   - ha az eleje fel-le billeg (lengés): `balance-kd` növelése, vagy
+     `balance-kp` csökkentése;
+   - 15 A/fok fölé ne menj próba nélkül. A modell szerint 20 A/fok körül a
+     késleltetés miatt már lengésbe jön (`python3 tools/balansz_modell.py`).
+
+Az alapértékek (Kp 8 A/fok, Kd 1,0 A·s/fok, 40 A, 400 A/s) a modell szerint 0,3
+és 1,2 Nm/A közötti motornyomaték-állandónál és 30 ms késleltetésig stabilak.
+A valódi rolleren ettől eltérhet.
+
 ## Beállítható paraméterek
 
 Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
@@ -246,6 +353,9 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `temp-warn-fet`, `temp-warn-motor`: a hőfok ikon határai.
 - `front-enabled`, `p1-front-brake`: az első vezérlő használata, és hogy az
   1-es profilban fékezzen-e az első motor (alapból nem, csak a hátsó dolgozik).
+- `balance-...`: a balansz mód beállításai (tengely, előjel, vízszint, indítási
+  szögtartomány, gáz-/fékküszöbök, PID erősítések, áramkorlátok, biztonsági
+  határok, sebességkorlát), mindegyik magyarázattal a script elején.
 
 ## Bluetooth (VESC Tool)
 

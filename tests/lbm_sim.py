@@ -151,6 +151,10 @@ class Vesc:
         self.can_temp_mot = {}
         self.printed = []
         self.events = []
+        self.imu_rpy = [0.0, 0.0, 0.0]   # radians
+        self.imu_acc = [0.0, 0.0, 1.0]   # g
+        self.motor_current = None        # last set-current
+        self.motor_log = []
         self.sleep_budget = None   # number of sleeps before Blocked is raised
         self.fail_temp = False     # get-temp-fet raises an error
 
@@ -496,6 +500,11 @@ class Interp:
                 return v.gpio_in[pin]
             return v.gpio.get(pin, 0)
 
+        def set_current(amps, off_delay=None):
+            v.motor_current = float(num(amps))
+            v.motor_log.append((v.now, v.motor_current))
+            return True
+
         def get_temp_fet():
             if v.fail_temp:
                 raise LispError("eval_error (injected)")
@@ -550,6 +559,10 @@ class Interp:
             "canget-temp-fet": lambda i: v.can_temp_fet.get(i, 0.0),
             "canget-temp-motor": lambda i: v.can_temp_mot.get(i, 0.0),
             "get-temp-fet": get_temp_fet,
+            "get-imu-rpy": lambda: list(v.imu_rpy),
+            "get-imu-acc": lambda: list(v.imu_acc),
+            "rad2deg": lambda x: math.degrees(num(x)),
+            "set-current": set_current,
             "get-temp-mot": lambda: v.temp_mot,
             "get-batt": lambda: v.batt,
             "get-fault": lambda: v.fault,

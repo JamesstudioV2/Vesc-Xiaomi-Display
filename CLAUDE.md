@@ -6,6 +6,9 @@ Ez a fájl a projekt állapotjegyzete. Minden Claude Code munkamenet automatikus
 ## Cél
 Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 
+**Ez a `Balance` ág:** a `main` + a kísérleti **balansz mód** (egykerekes indulás a hátsó keréken).
+A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
+
 ## Hardver és döntések (rögzítve)
 - Firmware: **VESC 7.00** mindkét vezérlőn.
 - Kijelző: Xiaomi M365 PRO 2 BLE, a **hátsó** vezérlő COMM portján, half-duplex UART a TX lábon (115200).
@@ -22,6 +25,25 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 - Profilok: P1 (alap, „rendőr”) = csak hátsó motor, 3 km/h berúgás, ECO 6 km/h/100 W, S 25 km/h/500 W.
   P2 (bekapcsoláskor nyomva tartott gáz) = mindkét motor, nincs berúgás, S korlátlan, D korlátlan sebesség 60% fázisárammal, álló helyzetben akku % a kijelzőn.
 - **Becsült, a felhasználó által nem megadott értékek:** P1 D = 20 km/h/300 W, P2 ECO = 25 km/h/50%, P1-ben az első motor fék nélkül, módsorrend D→S→ECO, hosszú gombnyomásnak nincs funkciója, induló mód D.
+
+## Balansz mód (Balance ág) – döntések
+- Csak 2-es profilban, `state` = 'run, álló helyzetben (< 1 km/h), szög 10–35° (roll < 30°), IMU adat van,
+  gáz ÉS fék ≥ 0,9 egyszerre 1,0 s-ig, és a legutóbbi kilépés óta eltelt 2 s (cooldown).
+- Bekapcsoláskor: ADC app kimenet tiltva (`app-disable-output -1`), a hátsó motort a script `set-current`-tel vezérli
+  egy saját szálon 100 Hz-en (`balance-thread`). Az első motor flags = 0 (CAN üzenet), és ADC parancsot sem kap.
+  Az `l-current-max-scale` 1,0, a `max-speed` = balansz-korlát + 10 km/h; kilépéskor `apply-mode-limits` visszaállítja.
+- Szabályzó: PD (Ki = 0 alapból), célszög = a bekapcsoláskori szög. Kp 8 A/fok, Kd 1,0, 40 A, 400 A/s, 0,3 s felfutás.
+  Hiba + = az eleje lejjebb van → pozitív áram (gyorsít). A deriváltat a szög numerikus deriváltjából számolja (LP 0,3).
+- Kilépés: gáz < 0,3; a fék újbóli behúzása (> 0,3, a felengedése után); a fék 2 s-on belül nincs elengedve; a szög < 4°
+  (leszállt); > 50°; roll > 30°; hátramenet > 3 km/h; > 25 km/h; nincs kijelzőkeret 0,3 s; VESC hiba; nincs IMU adat;
+  script hiba. 20 km/h fölött 'landing: a célszög 15°/s-mal csökken.
+- Kilépés után: ADC app vissza (a fék működik), a gáz `bal-thr-lock`-kal fogva, amíg el nem engedik (`thr-lvl` < 0,05).
+- `thr-lvl`/`brk-lvl`: a nyers kijelzőértékből, a VESC Tool ADC kalibrációja szerint, a gázfogástól függetlenül.
+- Balansz alatt a módváltás tiltva, a lámpa kapcsolható. A féklámpa villog, ha az áram < −5 A.
+- Az első vezérlő flag-váltása után 1 s türelmi idő van a 50-es hibakód előtt (`front-flags-time`).
+- REPL: `(szog)` a tengely/előjel/vízszint beállításához; `(status)` utolsó sora a balansz állapota.
+- `tools/balansz_modell.py`: a modell, amiből az alapértékek jöttek. `tests/test_balance.py`: 24 teszt, benne zárt hurkú
+  teszt a modellel (Kt 0,3/0,5/0,8 tartja; rossz előjellel leesik).
 
 ## Fájlok
 - `lisp/hatso_vezerlo.lisp`: fő script (kijelző, gomb, lámpák, profilok, berúgás, első vezérlő vezérlése).
@@ -58,6 +80,9 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   és kb. 3 kérés/s ütemben. PC-s híddal elvben átcsempészhető lenne, de lassú és csak PC-ről menne, ezért nem javasolt.
   A README kapott egy „Bluetooth (VESC Tool)” szakaszt a VESC Express ajánlással. Opcionális bővítésként felajánlva:
   Xiaomi-kompatibilis appok (pl. m365 Tools) támogatása a kijelző BLE-jén (adatok, lámpa, mód; VESC-beállítást nem tud).
+
+- 2026-11-09: **Balance ág** létrehozva: balansz mód (egykerekes indulás), részletek fent. 67 teszt átmegy.
+  A felhasználónak irányteszt kell felemelt hátsó kerékkel (README „Első próbák”), utána óvatos hangolás.
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
