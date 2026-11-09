@@ -59,6 +59,10 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   A README kapott egy „Bluetooth (VESC Tool)” szakaszt a VESC Express ajánlással. Opcionális bővítésként felajánlva:
   Xiaomi-kompatibilis appok (pl. m365 Tools) támogatása a kijelző BLE-jén (adatok, lámpa, mód; VESC-beállítást nem tud).
 
+- 2026-11-09: **`Balance` ág** létrehozva (csak ott!): kísérleti balansz mód, egykerekes indulás a hátsó keréken
+  2-es profilban (gáz + fék 1 s, felemelt elejével, álló helyzetből; a hátsó motor PD-vel tartja a szöget).
+  A részletek az ág `CLAUDE.md`-jében és README-jében vannak. A `main`-be még nincs beolvasztva.
+
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
 2. Hardveres próba felemelt kerékkel (README „Első próba” lista), visszajelzés a felhasználótól.
