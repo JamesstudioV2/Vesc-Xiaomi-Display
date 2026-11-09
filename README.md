@@ -36,7 +36,7 @@ script kezeli.
 A „korlátlan” 1000 km/h-s és 1 500 000 W-os korlátot jelent. Ilyenkor a VESC
 Tool-ban beállított motoráram- és akkuáram-limitek maradnak érvényben.
 
-**Kijelző gomb (ADC1):**
+**Kijelző gomb (a kijelzőben, zöld vezeték → RX):**
 - 1x nyomás: első lámpa ki/be (ADC2 kimenet + lámpa ikon).
 - 2x gyors nyomás: módváltás **D → S → ECO → D**, 1 sípolással.
 - Hosszú (1,5 s-nál hosszabb) nyomás: nincs funkciója.
@@ -71,8 +71,12 @@ ADC), a script módosítása nélkül.
 |---|---|---|
 | piros | 5V | a kijelző tápja |
 | fekete | GND | |
-| sárga (adat) | **TX** | half-duplex, csak a TX láb kell, az RX szabad marad |
-| zöld (gomb) | **ADC1** | **1 kΩ** felhúzó ellenállás az ADC1 és a **3.3V** közé (ha kell, 470 Ω); lenyomva a kijelző GND-re húzza. Ajánlott még 1 µF kondenzátor az ADC1 és a GND közé. |
+| sárga (adat) | **TX** | half-duplex, csak a TX lábat használja |
+| zöld (gomb) | **RX** | **470 Ω** felhúzó ellenállás az RX és a **3.3V** közé. A gomb a kijelzőben van, lenyomva a kijelző GND-re húzza ezt a vezetéket. Opcionálisan 1 µF kondenzátor az RX és a GND közé. |
+
+**ADC1:** szabad. Ajánlott egy 10 kΩ-os ellenállással GND-re kötni, hogy
+induláskor, a script elindulása előtt az ADC app ne lebegő bemenetet olvasson
+(ld. [Safe Start](#hátsó-vezérlő-app-settings)).
 
 **Kimenetek** (3,3 V-os logikai jel, N-csatornás MOSFET-tel):
 
@@ -81,13 +85,11 @@ ADC), a script módosítása nélkül.
 | PPM jel (servo) | féklámpa MOSFET gate |
 | ADC2 | első lámpa MOSFET gate |
 
-**Miért 1 kΩ a felhúzó?** A kijelző a zöld vezetéket nyugalmi állapotban is
-terheli. Az eredeti projektek ezért 1 kΩ-ot használnak, és a „véletlenszerű”
-gombolvasást 470 Ω-mal szüntették meg. Ennél nagyobb felhúzóval (pl. 10 kΩ) a
-nyugalmi feszültség akár 1 V alá is eshet. A script ezt is kezeli (ld.
-[A gomb nem működik](#a-gomb-nem-működik)), de minél nagyobb a különbség a
-nyugalmi és a lenyomott szint között, annál zajtűrőbb a gomb. Az 1 µF-os
-kondenzátor a fantomnyomásokat szűri.
+**Miért ilyen kicsi (470 Ω) a felhúzó?** A kijelző a zöld vezetéket
+nyugalmi állapotban is terheli. Az eredeti projektek 1 kΩ-ot használnak, és a
+„véletlenszerű” gombolvasást 470 Ω-mal szüntették meg. Lenyomáskor 470 Ω-on
+~7 mA folyik, ez a 3.3V lábnak nem gond. Az 1 µF-os kondenzátor a
+fantomnyomásokat szűri.
 
 Tanácsok a kimenetekhez:
 - **Logikai szintű** N-FET kell (pl. AO3400, IRLZ44N, IRLML6344), amelyik 3,3 V
@@ -126,7 +128,8 @@ sebességgel.
 ### Hátsó vezérlő (App Settings)
 1. **General → App to Use:** `ADC`. Az UART appot a script úgyis leállítja.
 2. **ADC → General:**
-   - Control Type: **`Current No Reverse Brake ADC2`** (gáz = ADC1, fék = ADC2)
+   - Control Type: **`Current No Reverse Brake ADC2`** (az app 1-es csatornája
+     a gáz, a 2-es a fék, mindkettőt a script tölti a kijelzőről, nem a lábakról)
    - Use Filter: `True`
    - Safe Start: `Regular` (**fontos**, ld. lent)
    - Multiple VESCs Over CAN: **`True`** (ezzel kapja az első motor a gázt és a féket)
@@ -143,8 +146,13 @@ kitérést. A kalibrációhoz kapcsold be a rollert **a gázkart nyomva tartva**
 Felemelt kerékkel csináld!
 
 **Miért kell a Safe Start:** amíg a script el nem indul, az ADC app a fizikai
-ADC1 lábat olvassa. Ott a gomb felhúzó ellenállása miatt ~3,3 V van, ami teljes
-gáznak látszana. A Safe Start (és a kalibrációból adódó tartomány) ezt kizárja.
+ADC1 és ADC2 lábat olvassa. Az ADC1 most szabad, és ha lebeg, akármit mutathat.
+A Safe Start csak akkor enged kimenetet, ha a gáz előtte egy ideig nulla volt.
+Az ADC1 10 kΩ-os GND-re kötése ezt a kockázatot is megszünteti.
+
+**Az App to Use csak `ADC` lehet.** Ha `ADC and UART` (vagy bármelyik UART-os
+app) van beállítva, a script UART-indítása a firmware-ben véglegesen
+`No App`-ra állítja át, és akkor a gáz egyáltalán nem működik.
 
 ### Első vezérlő
 - **App to Use:** `No App`. A parancsokat a hátsó ADC app küldi CAN-en.
@@ -167,27 +175,28 @@ Ha nincs első vezérlő, a hátsó script elején legyen `(def front-enabled ni
 ## Hibakeresés
 
 A Lisp konzolban (REPL) a `(status)` parancs kiírja a profilt, az állapotot, a
-módot, a sebességet, a nyers és a kalibrált gáz-/fékértéket, a gomb ADC1
-feszültségét (aktuális, megtanult nyugalmi, legkisebb, legnagyobb) és az első
-vezérlő válaszát.
+módot, a sebességet, a nyers és a kalibrált gáz-/fékértéket, a gomb lábának
+állapotát (1 = felengedve, 0 = lenyomva), az észlelt lenyomások számát és az
+első vezérlő válaszát.
 
-Ha a VESC Tool-ban App beállítást írsz, az ADC app újraindul, és a lámpakimenetek
-egy pillanatra elengednek. A script fél másodpercen belül visszaállítja őket.
+Ha a VESC Tool-ban az App típusát vagy a Servo Output beállítást megváltoztatod,
+a firmware újraindítja az appokat, és közben a lámpák és a gomb lábait is
+átállítja. A script ezeket fél másodpercen belül visszaállítja.
 
 ### A gomb nem működik
 
 1. Csatlakozz a hátsó vezérlőhöz, és nyisd meg a **VESC Dev Tools → Lisp**
-   konzolt. Bekapcsoláskor kiírja: `Profil: 1, gomb nyugalmi feszultseg: X V`.
+   konzolt. Bekapcsoláskor kiírja: `Profil: 1, gomb lab: 1 (1 = felengedve)`.
 2. Írd be: `(gomb-teszt)`, és 5 másodpercig nyomogasd a gombot. A script
-   0,2 s-onként kiírja az ADC1 feszültséget és a megtanult nyugalmi szintet.
-   Lenyomáskor a sor végén `LENYOMVA` jelenik meg.
-3. Minden lenyomásnál és felengedésnél megjelenik egy `gomb le ...` /
-   `gomb fel ...` sor, utána a művelet: `1x -> lampa BE`, `2x -> mod S`.
+   0,2 s-onként kiírja a gomb lábának állapotát (`lab = 1`, lenyomva
+   `lab = 0  LENYOMVA`), a végén pedig az észlelt lenyomások számát.
+3. Minden lenyomásnál és felengedésnél megjelenik egy `gomb le` / `gomb fel`
+   sor, utána a művelet: `1x -> lampa BE`, `2x -> mod S`.
 
 | Amit látsz | Ok, teendő |
 |---|---|
-| a nyugalmi szint 0,15 V alatt van | nincs felhúzás: ellenőrizd az ellenállást és a 3.3V bekötését, vagy cseréld 1 kΩ-ra / 470 Ω-ra |
-| nyomásra nem esik a nyugalmi szint fele alá | a gomb nem a GND-re húz, vagy túl erős a felhúzó a kijelző belső ellenállásához képest: mérd meg multiméterrel |
+| mindig `lab = 0` | a zöld vezeték folyamatosan GND-n van, vagy nincs felhúzás: ellenőrizd a 470 Ω-ot és a 3.3V-ot, és hogy tényleg az RX lábon van-e |
+| mindig `lab = 1`, nyomásra sem változik | a gomb nem ezt a vezetéket húzza le, vagy a zöld vezeték nem az RX-en van: mérd meg multiméterrel nyomás közben |
 | van `gomb le`/`fel`, de nincs művelet | túl hosszú (1,5 s fölötti) a nyomás, vagy 0,4 s-nál lassabb a dupla nyomás |
 | `1x -> lampa BE` megjelenik, a kijelzőn a lámpa ikon is, de a lámpa nem ég | a hiba az ADC2 kimenetnél vagy a MOSFET-nél van: mérd meg az ADC2 lábon a ~3,3 V-ot |
 | egyáltalán nincs kiírás, `(status)` sem megy | nem fut a script: töltsd fel újra, és nézd meg a hibaüzenetet |
@@ -228,9 +237,8 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `p2-detect-throttle`, `p2-detect-hold`, `p2-detect-window`: a 2-es profil
   aktiválásához szükséges gázmérték, tartási idő és időablak.
 - `p2-idle-speed`: e sebesség alatt mutatja a kijelző az akku %-ot a 2-es profilban.
-- `button-press-ratio`, `button-release-ratio`, `button-min-idle`: a gomb
-  érzékelése. A script a gomb nyugalmi feszültségét magától megtanulja, és az
-  ahhoz képesti esést figyeli (alapból 50% alatt lenyomva, 70% fölött elengedve).
+- `button-pin`: a gomb lába (alapból `'pin-rx`). Digitálisan olvassa, lenyomva 0,
+  pergésmentesítéssel (lenyomás 3, felengedés 2 minta, 20 ms-onként).
 - `double-click-time`, `long-press-time`: a dupla és a hosszú nyomás időzítése.
 - `button-log`: a gombesemények kiírása a Lisp konzolra (hibakereséshez).
 - `brake-level`, `brake-blink-half`: a féklámpa érzékenysége és villogási

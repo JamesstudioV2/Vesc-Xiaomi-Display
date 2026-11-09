@@ -7,7 +7,8 @@
 ;  - A kijelzőre kötött gázkar/fékkar értékét az ADC app-ba küldi
 ;    (app-adc-override), így a görbék, tartományok, rámpák a VESC Tool-ban
 ;    (App Settings -> ADC) hangolhatók.
-;  - Kijelző gomb az ADC1-en (felhúzó ellenállás, lenyomva = GND):
+;  - Kijelző gomb a kijelző zöld vezetékén, a COMM port RX lábán (felhúzó
+;    ellenállás 3.3V-ra, lenyomva a kijelző GND-re húzza):
 ;      1x nyomás = első lámpa (ADC2 MOSFET) + lámpa ikon
 ;      2x nyomás = módváltás  D -> S -> ECO -> D
 ;  - PPM láb: féklámpa MOSFET. Alapból folyamatosan világít, fékezéskor villog.
@@ -20,8 +21,9 @@
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
 ;   kijelző sárga  -> TX (half-duplex adatvonal)
-;   kijelző zöld (gomb) -> ADC1 + 1 kOhm felhúzó ellenállás 3.3V-ra
+;   kijelző zöld (gomb) -> RX + 470 Ohm felhúzó ellenállás 3.3V-ra
 ;   PPM jel -> féklámpa MOSFET gate,   ADC2 -> első lámpa MOSFET gate
+;   ADC1 -> szabad (10 kOhm-mal GND-re ajánlott)
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
 ; Részletes leírás és VESC Tool beállítások: README.md
@@ -53,13 +55,9 @@
 (def throttle-released 0.05)  ; 2-es profilban ez alá kell engedni a gázt az induláshoz
 (def p2-idle-speed 1.0)       ; km/h - 2-es profilban ez alatt akku %-ot mutat
 
-; Kijelző gomb (ADC1, felhúzó ellenállással, lenyomva GND)
-; A script megtanulja a gomb nyugalmi feszültségét, és az ahhoz képesti esést
-; figyeli. Így mindegy, hogy a kijelző és a VESC bemenete mennyire húzza le a
-; vezetéket, és nem kell fix feszültségküszöb.
-(def button-press-ratio 0.5)   ; lenyomva: a nyugalmi feszültség 50%-a alatt
-(def button-release-ratio 0.7) ; elengedve: a nyugalmi feszültség 70%-a fölött
-(def button-min-idle 0.15)     ; V - ennél kisebb nyugalmi szintnél nincs felhúzás, nem figyeljük
+; Kijelző gomb: a zöld vezeték a COMM port RX lábán, felhúzóval 3.3V-ra.
+; Lenyomva a kijelző GND-re húzza (0), elengedve 1.
+(def button-pin 'pin-rx)       ; a gomb lába
 (def double-click-time 0.4)    ; s - ennyi idő alatt jöhet a második nyomás
 (def long-press-time 1.5)      ; s - ennél hosszabb nyomás nem számít kattintásnak
 (def button-log t)             ; t = gombesemények kiírása a VESC Tool Lisp konzolra
@@ -113,10 +111,7 @@
 (def thr-release-start 0)
 (def btn-state nil)
 (def btn-cnt 0)
-(def btn-v 0.0)
-(def btn-idle-v -1.0)          ; tanult nyugalmi feszültség, -1 = még nincs
-(def btn-min-v 9.9)
-(def btn-max-v 0.0)
+(def btn-presses 0)            ; összes észlelt lenyomás (diagnosztika)
 (def btn-clicks 0)
 (def btn-press-time 0)
 (def btn-release-time 0)
@@ -320,12 +315,10 @@
             (sleep 0.01)
 }))
 
-; -> Gomb (ADC1)
+; -> Gomb (RX láb, digitális)
 
 (defun button-log-msg (what) ; csak ASCII a konzolra
-    (if button-log
-        (print (str-merge "gomb " what ": " (str-from-n btn-v "%.2f")
-                " V (alap " (str-from-n btn-idle-v "%.2f") " V)")))
+    (if button-log (print (str-merge "gomb " what)))
 )
 
 (defun button-action (clicks)
@@ -344,19 +337,7 @@
 ))
 
 (defun button-step () {
-        (var v (get-adc 0))
-        (setq btn-v v)
-        (if (< v btn-min-v) (setq btn-min-v v))
-        (if (> v btn-max-v) (setq btn-max-v v))
-        (if (< btn-idle-v 0.0) (setq btn-idle-v v)) ; első minta
-        ; lenyomva = a tanult nyugalmi szinthez képest nagy esés (hiszterézissel)
-        (var raw
-            (if btn-state
-                (< v (* btn-idle-v button-release-ratio))
-                (and (> btn-idle-v button-min-idle) (< v (* btn-idle-v button-press-ratio)))))
-        ; a nyugalmi szintet csak elengedett gombnál tanuljuk (lassan, a zaj ellen)
-        (if (and (not btn-state) (not raw))
-            (setq btn-idle-v (+ btn-idle-v (* 0.05 (- v btn-idle-v)))))
+        (var raw (= (gpio-read button-pin) 0)) ; lenyomva = 0
         ; pergésmentesítés: lenyomás 3, elengedés 2 egymás utáni minta (20 ms-onként)
         (if (eq raw btn-state)
             (setq btn-cnt 0)
@@ -368,6 +349,7 @@
                     {
                         (setq btn-press-time (systime))
                         (setq btn-long-done nil)
+                        (setq btn-presses (+ btn-presses 1))
                         (button-log-msg "le")
                     }
                     {
@@ -383,29 +365,21 @@
                 (setq btn-clicks 0)
                 (button-log-msg "hosszu nyomas, eldobva")
         })
-        ; 10 s-nál tovább "lenyomva": valószínűleg rossz a tanult szint, újratanuljuk
-        (if (and btn-state (> (secs-since btn-press-time) 10.0)) {
-                (setq btn-state nil)
-                (setq btn-cnt 0)
-                (setq btn-idle-v v)
-                (button-log-msg "beragadt, ujratanulas")
-        })
         (if (and (not btn-state) (> btn-clicks 0) (> (secs-since btn-release-time) double-click-time)) {
                 (button-action btn-clicks)
                 (setq btn-clicks 0)
         })
 })
 
-; REPL-ből hívható: (gomb-teszt) - 5 másodpercig írja az ADC1 feszültséget
+; REPL-ből hívható: (gomb-teszt) - 5 másodpercig írja a gomb lábának állapotát
 (defun gomb-teszt () {
-        (print "Gomb teszt 5 s: nyomogasd a gombot")
+        (var start btn-presses)
+        (print "Gomb teszt 5 s: nyomogasd a gombot (1 = felengedve, 0 = lenyomva)")
         (looprange i 0 25 {
-                (print (str-merge (str-from-n (get-adc 0) "%.2f") " V  alap "
-                        (str-from-n btn-idle-v "%.2f") " V" (if btn-state "  LENYOMVA" "")))
+                (print (if (= (gpio-read button-pin) 0) "lab = 0  LENYOMVA" "lab = 1"))
                 (sleep 0.2)
         })
-        (print (str-merge "min " (str-from-n btn-min-v "%.2f") " V, max "
-                (str-from-n btn-max-v "%.2f") " V"))
+        (print (str-merge "Eszlelt lenyomasok: " (str-from-n (- btn-presses start) "%d")))
 })
 
 ; -> Lámpák
@@ -440,7 +414,7 @@
                 (setq state 'run)
             })
         (print (str-merge "Profil: " (str-from-n p "%d")
-                ", gomb nyugalmi feszultseg: " (str-from-n btn-idle-v "%.2f") " V"))
+                ", gomb lab: " (str-from-n (gpio-read button-pin) "%d") " (1 = felengedve)"))
 })
 
 (defun detect-step (thr) {
@@ -503,11 +477,13 @@
         })
         (if (> (secs-since t-slow) 0.5) {
                 (setq t-slow (systime))
-                ; Az ADC app minden újraindításkor (pl. App beállítás írása a VESC
-                ; Tool-ból) analóg bemenetre állítja az ADC lábakat, ezért a
-                ; kimeneteket újra beállítjuk. A kimeneti szint nem változik.
+                ; Ha a VESC Tool-ban az App típusa vagy a Servo Output változik, a
+                ; firmware újraindítja az appokat: az ADC lábakat analógra, a PPM
+                ; lábat bemenetre állítja. Ezért a lábakat újra beállítjuk, a
+                ; kimeneti szint közben nem változik.
                 (gpio-configure 'pin-ppm 'pin-mode-out)
                 (gpio-configure 'pin-adc2 'pin-mode-out)
+                (gpio-configure button-pin 'pin-mode-in-pu)
                 (refresh-gate)
                 (update-temp-warn)
                 (update-front-warn)
@@ -532,8 +508,8 @@
             (list 'km/h (speed-kmh) 'berugva kick-engaged 'gaz-fogva thr-gate)
             (list 'gaz-nyers thr-raw 'fek-nyers brk-raw 'keretek lever-frames)
             (list 'gaz (get-adc-decoded 0) 'fek (get-adc-decoded 1))
-            (list 'gomb-V (get-adc 0) 'gomb-alap btn-idle-v 'gomb-min btn-min-v 'gomb-max btn-max-v
-                'lenyomva btn-state 'lampa light)
+            (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses
+                'lampa light)
             (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn)
 )))
 
@@ -544,7 +520,6 @@
         (app-adc-detach 3 1)
         (app-disable-output -1)
 
-        (gpio-configure 'pin-adc1 'pin-mode-analog) ; gomb
         (gpio-configure 'pin-ppm 'pin-mode-out)     ; féklámpa
         (gpio-write 'pin-ppm 1)
         (gpio-configure 'pin-adc2 'pin-mode-out)    ; első lámpa
@@ -567,7 +542,9 @@
         (event-register-handler (spawn can-event-loop))
         (event-enable 'event-can-sid)
 
+        ; half-duplex módban csak a TX láb kell, az RX szabad: ezen van a gomb
         (uart-start 115200 'half-duplex)
+        (gpio-configure button-pin 'pin-mode-in-pu)
         (spawn 200 rx-thread)
 })
 

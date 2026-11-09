@@ -202,6 +202,10 @@ def check_uses(forms, defs, funcs, consts, errors, path, in_quote=False):
             check_uses(items, defs, funcs, consts, errors, path, in_quote)
         elif kind == "quote":
             q = node[1]
+            # a pin name kept in a variable, e.g. (def button-pin 'pin-rx)
+            if (q == "'" and node[2][0] == "atom" and node[2][1].startswith("pin-")
+                    and node[2][1] not in consts):
+                errors.append("%s:%d: unknown pin name '%s" % (path, node[3], node[2][1]))
             if q == "`":
                 # quasiquote: only , and ,@ parts are code
                 check_uses([node[2]], defs, funcs, consts, errors, path, True)

@@ -133,7 +133,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
         self.assertEqual(r.v.out("pin-ppm"), 1, "tail light on from boot")
         self.assertEqual(r.v.out("pin-adc2"), 0, "headlight off at boot")
-        self.assertEqual(r.v.gpio_mode["pin-adc1"], "pin-mode-analog")
+        self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu", "button input")
         self.assertAlmostEqual(r.v.conf["max-speed"], 20 / 3.6)  # P1 D until decided
 
     def test_no_throttle_selects_profile1(self):
@@ -260,24 +260,34 @@ class KickStartTests(unittest.TestCase):
 
 
 class ButtonTests(unittest.TestCase):
-    def rear(self, idle=3.3):
+    """A gomb a kijelző zöld vezetékén, az RX lábon: felengedve 1, lenyomva 0."""
+
+    def rear(self):
         r = Rear()
-        r.v.adc[0] = idle
-        r.idle = idle
         r.boot_p1()
         return r
 
-    def press(self, r, secs, low=0.0):
-        r.v.adc[0] = low
+    def set_btn(self, r, pressed):
+        r.v.gpio_in["pin-rx"] = 0 if pressed else 1
+
+    def press(self, r, secs):
+        self.set_btn(r, True)
         r.step(max(1, int(secs / STEP)))
-        r.v.adc[0] = r.idle
+        self.set_btn(r, False)
         r.step(1)
 
-    def click(self, r, n=1, low=0.0):
+    def click(self, r, n=1):
         for _ in range(n):
-            self.press(r, 0.08, low)
+            self.press(r, 0.08)
             r.step(3)
         r.step(int(0.5 / STEP))
+
+    def test_rx_is_a_pulled_up_input_after_uart_start(self):
+        r = Rear()
+        self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
+        self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu")
+        self.assertEqual(r.v.gpio_mode["pin-tx"], "uart-af")
+        self.assertNotIn("pin-adc1", r.v.gpio_mode, "ADC1 is free now")
 
     def test_single_click_toggles_headlight(self):
         r = self.rear()
@@ -312,85 +322,42 @@ class ButtonTests(unittest.TestCase):
         self.assertEqual(r.g("light"), None)
         self.assertEqual(r.g("speedmode"), 1)
 
-    def test_single_noise_samples_ignored(self):
+    def test_short_glitches_low_are_ignored(self):
         r = self.rear()
         for low_steps in (1, 2):
-            r.v.adc[0] = 0.0
+            self.set_btn(r, True)
             r.step(low_steps)
-            r.v.adc[0] = 3.3
+            self.set_btn(r, False)
             r.step(int(0.6 / STEP))
         self.assertEqual(r.g("light"), None)
+        self.assertEqual(r.g("btn-presses"), 0)
 
-    # Az eredeti hiba: fix 1.0 V-os küszöb. Ha a kijelző és a VESC bemenete
-    # lehúzza a vezetéket (gyenge felhúzó), a nyugalmi szint 1 V alatt van, a
-    # gomb "mindig lenyomva", és soha nem jön kattintás.
-    def test_works_when_idle_voltage_is_low(self):
-        for idle in (0.3, 0.6, 0.95, 1.6):
-            r = self.rear(idle)
-            self.click(r, 1)
-            self.assertTrue(r.g("light"), "idle %.2f V" % idle)
-            self.click(r, 2)
-            self.assertEqual(r.g("speedmode"), 4, "idle %.2f V" % idle)
+    def test_short_glitch_high_does_not_split_a_press(self):
+        r = self.rear()
+        self.set_btn(r, True)
+        r.step(4)
+        self.set_btn(r, False)
+        r.step(1)  # egyetlen pergés felengedés közben
+        self.set_btn(r, True)
+        r.step(4)
+        self.set_btn(r, False)
+        r.step(int(0.6 / STEP))
+        self.assertTrue(r.g("light"), "one press = one click, not a double click")
+        self.assertEqual(r.g("speedmode"), 1)
 
-    def test_works_when_press_does_not_reach_ground(self):
-        r = self.rear(3.3)
-        self.click(r, 1, low=1.3)  # pl. soros ellenállás a kijelzőben
-        self.assertTrue(r.g("light"))
-
-    def test_small_dip_is_not_a_press(self):
-        r = self.rear(3.3)
-        self.click(r, 1, low=2.0)  # 60 %: zaj vagy feszültségesés, nem nyomás
+    def test_line_stuck_low_is_one_ignored_long_press(self):
+        r = self.rear()
+        self.set_btn(r, True)
+        r.step(int(5.0 / STEP))
+        self.set_btn(r, False)
+        r.step(int(0.6 / STEP))
         self.assertEqual(r.g("light"), None)
-
-    def test_no_pullup_never_presses(self):
-        r = self.rear(0.05)
-        self.click(r, 1, low=0.0)
-        self.assertEqual(r.g("light"), None)
-
-    def test_noise_spike_up_does_not_cause_phantom_press(self):
-        r = self.rear(1.0)
-        r.v.adc[0] = 3.3
-        r.step(1)
-        r.v.adc[0] = 1.0
-        r.step(int(1.0 / STEP))
-        self.assertEqual(r.g("light"), None)
-        self.assertFalse(r.g("btn-state"))
-        self.click(r, 1)
-        self.assertTrue(r.g("light"))
-
-    def test_button_held_at_boot_is_ignored_then_works(self):
-        r = Rear()
-        r.v.adc[0] = 0.0
-        r.idle = 3.3
-        r.step(int(1.0 / STEP))
-        r.v.adc[0] = 3.3
-        r.step(int(1.5 / STEP))
-        self.assertEqual(r.g("light"), None)
-        self.click(r, 1)
-        self.assertTrue(r.g("light"))
-
-    def test_stuck_low_relearns(self):
-        r = self.rear(3.3)
-        self.press(r, 12.0)
-        self.assertFalse(r.g("btn-state"))
-        r.step(int(1.0 / STEP))
-        self.click(r, 1)
-        self.assertTrue(r.g("light"))
-
-    def test_slow_drift_of_idle_level_is_followed(self):
-        r = self.rear(3.3)
-        for k in range(100):  # 2 s alatt 3.3 V -> 1.3 V
-            r.v.adc[0] = 3.3 - 0.02 * k
-            r.step(1)
-        r.idle = 1.3
-        r.v.adc[0] = 1.3
-        r.step(int(1.0 / STEP))
-        self.assertEqual(r.g("light"), None)
+        self.assertEqual(r.g("btn-presses"), 1)
         self.click(r, 1)
         self.assertTrue(r.g("light"))
 
     def test_events_are_logged_for_diagnosis(self):
-        r = self.rear(0.6)
+        r = self.rear()
         self.click(r, 1)
         text = " ".join(str(a) for p in r.v.printed for a in p)
         self.assertIn("gomb le", text)
@@ -398,24 +365,37 @@ class ButtonTests(unittest.TestCase):
         self.assertIn("lampa BE", text)
 
     def test_gomb_teszt_runs(self):
-        r = self.rear(0.6)
+        r = self.rear()
         r.i.call("gomb-teszt")
         self.assertGreaterEqual(len(r.v.printed), 26)
 
+    def test_button_pin_is_configurable(self):
+        r = Rear()
+        r.i.set("button-pin", "pin-adc1")
+        r.v.gpio_in["pin-adc1"] = 1
+        r.i.call("init")
+        r.boot_p1()
+        r.v.gpio_in["pin-adc1"] = 0
+        r.step(4)
+        r.v.gpio_in["pin-adc1"] = 1
+        r.step(int(0.6 / STEP))
+        self.assertTrue(r.g("light"))
+
 
 class OutputPinTests(unittest.TestCase):
-    def test_outputs_restored_after_adc_app_restart(self):
+    def test_pins_restored_after_app_restart(self):
         r = Rear()
         r.boot_p1()
         r.i.set("light", True)
         r.step(2)
         self.assertEqual(r.v.out("pin-adc2"), 1)
-        r.v.app_restart()  # App beállítás írása a VESC Tool-ból
+        r.v.app_restart()  # App típus vagy Servo Output változott a VESC Tool-ban
         self.assertEqual(r.v.out("pin-adc2"), None)
+        self.assertEqual(r.v.out("pin-ppm"), None)
         r.step(int(0.6 / STEP))
         self.assertEqual(r.v.out("pin-adc2"), 1)
         self.assertEqual(r.v.out("pin-ppm"), 1)
-        self.assertEqual(r.v.gpio_mode["pin-adc1"], "pin-mode-analog")
+        self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu")
 
 
 class RobustnessTests(unittest.TestCase):
@@ -423,7 +403,7 @@ class RobustnessTests(unittest.TestCase):
         r = Rear()
         r.boot_p1()
         r.v.fail_temp = True
-        r.v.adc[0] = 0.0
+        r.v.gpio_in["pin-rx"] = 0
         r.v.sleep_budget = int(3.0 / STEP)
         try:
             r.i.call("control-loop")

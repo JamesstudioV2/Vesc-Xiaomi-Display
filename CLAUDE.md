@@ -9,8 +9,10 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 ## Hardver és döntések (rögzítve)
 - Firmware: **VESC 7.00** mindkét vezérlőn.
 - Kijelző: Xiaomi M365 PRO 2 BLE, a **hátsó** vezérlő COMM portján, half-duplex UART a TX lábon (115200).
-- Kijelző gomb: **ADC1**, 1 kΩ felhúzóval 3,3 V-ra, lenyomva GND. Az RX láb szabad.
-  A script megtanulja a nyugalmi feszültséget, és relatív esést figyel (50% alatt le, 70% fölött fel), nem fix küszöböt.
+- Kijelző gomb: **a kijelzőben** (eredeti helyén), a zöld vezeték a COMM **RX** lábán, **470 Ω** felhúzóval 3,3 V-ra,
+  lenyomva GND. Digitális olvasás (`gpio-read`, `button-pin` = `'pin-rx`), pergésmentesítés: 3 minta le, 2 minta fel.
+- **ADC1: szabad** (10 kΩ-mal GND-re ajánlott, hogy indításkor ne lebegjen).
+- App to Use: csak `ADC` (UART-os appnál a `uart-start` véglegesen No App-ra állítja).
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
 - Első lámpa: **ADC2** láb → N-FET, a gombbal kapcsolható.
 - Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
@@ -42,9 +44,14 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   a lámpakimenet. Mostantól 0,5 s-onként újra beállítjuk. A vezérlőciklus `trap`-pel védve, hiba esetén kiír és fut tovább.
   47 teszt átmegy. Az új gombtesztek a régi kóddal elbuktak (a diagnózist ez igazolja).
   **A felhasználó visszajelzése még kell:** `(gomb-teszt)` kimenete / működik-e.
+- 2026-11-09: A felhasználó a gombot **visszakötötte a kijelzőbe** (mint a referenciákban): a zöld vezeték
+  lenyomásra GND, 470 Ω felhúzó, ADC1 szabad. A kód át lett írva digitális RX-olvasásra (az analóg tanuló logika
+  törölve). Az RX-et a `uart-start` után állítjuk be bemenetre, és 0,5 s-onként a kimenetekkel együtt újra beállítjuk.
+  A doksi és a rajz frissítve. A firmware-ből ellenőrizve: a half-duplex `uart-start` nem nyúl az RX-hez, az appok
+  csak az App típus vagy a Servo Output változásakor indulnak újra. 43 teszt átmegy.
 
 ## Következő lépések
-1. Gomb: a felhasználó `(gomb-teszt)` kimenete alapján ellenőrizni (nyugalmi és lenyomott feszültség).
+1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
 2. Hardveres próba felemelt kerékkel (README „Első próba” lista), visszajelzés a felhasználótól.
 3. A becsült értékek (P1 D, P2 ECO, P1 első fék) megerősítése vagy javítása.
 4. Lehetséges bővítések: halvány hátsó lámpa PWM-mel (`pwm-start` a PPM lábon), tempomat, zár mód, BMS.

@@ -135,8 +135,9 @@ class Vesc:
             "l-current-max-scale": 1.0, "l-current-min-scale": 1.0,
         }
         self.conf_log = []
-        self.gpio_mode = {}
+        self.gpio_mode = {"pin-rx": "uart-af", "pin-tx": "uart-af"}
         self.gpio = {}
+        self.gpio_in = {"pin-rx": 1}  # external level on input pins (button released = 1)
         self.uart_started = None
         self.rx = []
         self.tx = []
@@ -160,9 +161,11 @@ class Vesc:
         return self.gpio.get(pin)
 
     def app_restart(self):
-        """What app_adc_start does when the app config is written from VESC Tool."""
+        """App type or servo output changed in VESC Tool: app_adc_start() sets the
+        ADC pins to analog, pwm_servo_stop() sets the PPM pin to input."""
         self.gpio_mode["pin-adc1"] = "pin-mode-analog"
         self.gpio_mode["pin-adc2"] = "pin-mode-analog"
+        self.gpio_mode["pin-ppm"] = "pin-mode-in"
 
     def decoded(self, ch):
         start = self.conf["adc-v1-start" if ch == 0 else "adc-v2-start"]
@@ -480,6 +483,19 @@ class Interp:
             v.gpio[pin] = need_int(val, 0, 1, "gpio-write")  # ODR, see Vesc.out()
             return True
 
+        def uart_start(*a):
+            # half-duplex: only TX is set to the UART function, RX is left alone
+            v.uart_started = a
+            v.gpio_mode["pin-tx"] = "uart-af"
+            if "half-duplex" not in a:
+                v.gpio_mode["pin-rx"] = "uart-af"
+            return True
+
+        def gpio_read(pin):
+            if pin in v.gpio_in:
+                return v.gpio_in[pin]
+            return v.gpio.get(pin, 0)
+
         def get_temp_fet():
             if v.fail_temp:
                 raise LispError("eval_error (injected)")
@@ -518,7 +534,7 @@ class Interp:
             "spawn": lambda *a: True,
             "event-register-handler": lambda *a: True,
             "event-enable": lambda *a: v.events.append(a) or True,
-            "uart-start": lambda *a: setattr(v, "uart_started", a) or True,
+            "uart-start": uart_start,
             "uart-read-bytes": uart_read_bytes, "uart-write": uart_write,
             "get-speed": lambda: v.speed_ms,
             "get-adc": lambda ch: v.adc[ch],
@@ -528,6 +544,7 @@ class Interp:
             "app-disable-output": app_disable_output,
             "conf-set": conf_set, "conf-get": conf_get,
             "gpio-configure": gpio_configure, "gpio-write": gpio_write,
+            "gpio-read": gpio_read,
             "can-send-sid": can_send_sid,
             "can-list-devs": lambda: list(v.can_devs),
             "canget-temp-fet": lambda i: v.can_temp_fet.get(i, 0.0),

@@ -92,8 +92,7 @@ Az ESC → kijelző mód bájt bitjei: 1 = D, 2 = ECO, 4 = S, 8 = töltés,
 
 | Téma | Referenciák | Ez a projekt |
 |---|---|---|
-| Gomb | RX láb, `gpio-read` | **ADC1** láb felhúzóval, `get-adc 0` feszültségküszöb, 2 mintás pergésmentesítés |
-| RX láb | gomb | szabad (half-duplex csak a TX-et használja) |
+| Gomb | RX láb (1 kΩ felhúzó), `gpio-read`, 3 mintás többségi döntés | ugyanígy az RX lábon, **470 Ω** felhúzóval. 3 mintás lenyomás, 2 mintás felengedés, egy pergés nem bont ketté egy nyomást. A gomb lába paraméter (`button-pin`) |
 | Féklámpa | nincs (lucidnx: PWM) | **PPM láb GPIO**: állandóan ég, fékezéskor 5 Hz-en villog |
 | Első lámpa | csak ikon | **ADC2 láb GPIO** + ikon |
 | Profilváltás | gomb-kombináció menet közben | **bekapcsoláskor nyomva tartott gáz** → 2-es profil, utána a gáz elengedéséig nincs kimenet |
@@ -106,6 +105,13 @@ Az ESC → kijelző mód bájt bitjei: 1 = D, 2 = ECO, 4 = S, 8 = töltés,
 - `uart-read-bytes` a firmware-ben Lispben van megírva: 4 ms-onként újrapróbál,
   és az olvasott bájtok után **egy 0-t is ír a pufferbe**, ezért a puffer legyen
   legalább 1 bájttal hosszabb.
+- `uart-start ... 'half-duplex` csak a TX lábat állítja UART-ra, az RX-hez nem
+  nyúl, így az RX szabadon használható gombnak. Ha az App `UART`, `PPM and UART`
+  vagy `ADC and UART`, a `uart-start` véglegesen `No App`-ra állítja át (eltárolja!).
+- Az appokat (és ezzel az ADC/PPM lábak módját) a firmware csak akkor indítja
+  újra, ha az *App to Use* vagy a *Servo Output* beállítás megváltozik:
+  `app_adc_start` analógra állítja az ADC lábakat, `pwm_servo_stop` bemenetre a
+  PPM lábat.
 - `app-adc-detach 3 1`: mindkét ADC és a gombok leválasztva. 6.05 óta a
   leválasztott ADC app nem nullázza magától a timeout-ot, ezért az override-ot
   folyamatosan küldeni kell. Ez egyben biztonsági funkció.
