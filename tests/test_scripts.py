@@ -131,8 +131,8 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(r.v.output_disabled)
         self.assertEqual(r.v.detached, (3, 1))
         self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
-        self.assertEqual(r.v.gpio["pin-ppm"], 1, "tail light on from boot")
-        self.assertEqual(r.v.gpio["pin-adc2"], 0, "headlight off at boot")
+        self.assertEqual(r.v.out("pin-ppm"), 1, "tail light on from boot")
+        self.assertEqual(r.v.out("pin-adc2"), 0, "headlight off at boot")
         self.assertEqual(r.v.gpio_mode["pin-adc1"], "pin-mode-analog")
         self.assertAlmostEqual(r.v.conf["max-speed"], 20 / 3.6)  # P1 D until decided
 
@@ -260,84 +260,196 @@ class KickStartTests(unittest.TestCase):
 
 
 class ButtonTests(unittest.TestCase):
-    def press(self, r, secs):
-        r.v.adc[0] = 0.0
+    def rear(self, idle=3.3):
+        r = Rear()
+        r.v.adc[0] = idle
+        r.idle = idle
+        r.boot_p1()
+        return r
+
+    def press(self, r, secs, low=0.0):
+        r.v.adc[0] = low
         r.step(max(1, int(secs / STEP)))
-        r.v.adc[0] = 3.3
+        r.v.adc[0] = r.idle
         r.step(1)
 
+    def click(self, r, n=1, low=0.0):
+        for _ in range(n):
+            self.press(r, 0.08, low)
+            r.step(3)
+        r.step(int(0.5 / STEP))
+
     def test_single_click_toggles_headlight(self):
-        r = Rear()
-        r.boot_p1()
+        r = self.rear()
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
         self.assertTrue(r.g("light"))
-        self.assertEqual(r.v.gpio["pin-adc2"], 1)
+        self.assertEqual(r.v.out("pin-adc2"), 1)
         self.assertEqual(r.last_dash()[8], 1)
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
-        self.assertEqual(r.v.gpio["pin-adc2"], 0)
+        self.assertEqual(r.v.out("pin-adc2"), 0)
 
     def test_double_click_cycles_modes(self):
-        r = Rear()
-        r.boot_p1()
-        self.press(r, 0.08)
-        r.step(3)
-        self.press(r, 0.08)
-        r.step(int(0.5 / STEP))
+        r = self.rear()
+        self.click(r, 2)
         self.assertEqual(r.g("speedmode"), 4)
         self.assertAlmostEqual(r.v.conf["max-speed"], 25 / 3.6)
         self.assertEqual(r.v.conf["l-watt-max"], 500.0)
         self.assertEqual(r.g("light"), None, "double click must not toggle the light")
         self.assertEqual(r.last_dash()[6], 4)
-        for _ in range(2):
-            self.press(r, 0.08)
-            r.step(3)
-        self.press(r, 0.08)
-        r.step(int(0.5 / STEP))
+        self.click(r, 3)
         self.assertEqual(r.g("speedmode"), 2)
         self.assertAlmostEqual(r.v.conf["max-speed"], 6 / 3.6)
         self.assertEqual(r.v.conf["l-watt-max"], 100.0)
-        for _ in range(2):
-            self.press(r, 0.08)
-            r.step(3)
-        r.step(int(0.5 / STEP))
+        self.click(r, 2)
         self.assertEqual(r.g("speedmode"), 1)
 
     def test_long_press_does_nothing(self):
-        r = Rear()
-        r.boot_p1()
+        r = self.rear()
         self.press(r, 2.0)
         r.step(int(0.6 / STEP))
         self.assertEqual(r.g("light"), None)
         self.assertEqual(r.g("speedmode"), 1)
 
-    def test_single_noise_sample_ignored(self):
+    def test_single_noise_samples_ignored(self):
+        r = self.rear()
+        for low_steps in (1, 2):
+            r.v.adc[0] = 0.0
+            r.step(low_steps)
+            r.v.adc[0] = 3.3
+            r.step(int(0.6 / STEP))
+        self.assertEqual(r.g("light"), None)
+
+    # Az eredeti hiba: fix 1.0 V-os küszöb. Ha a kijelző és a VESC bemenete
+    # lehúzza a vezetéket (gyenge felhúzó), a nyugalmi szint 1 V alatt van, a
+    # gomb "mindig lenyomva", és soha nem jön kattintás.
+    def test_works_when_idle_voltage_is_low(self):
+        for idle in (0.3, 0.6, 0.95, 1.6):
+            r = self.rear(idle)
+            self.click(r, 1)
+            self.assertTrue(r.g("light"), "idle %.2f V" % idle)
+            self.click(r, 2)
+            self.assertEqual(r.g("speedmode"), 4, "idle %.2f V" % idle)
+
+    def test_works_when_press_does_not_reach_ground(self):
+        r = self.rear(3.3)
+        self.click(r, 1, low=1.3)  # pl. soros ellenállás a kijelzőben
+        self.assertTrue(r.g("light"))
+
+    def test_small_dip_is_not_a_press(self):
+        r = self.rear(3.3)
+        self.click(r, 1, low=2.0)  # 60 %: zaj vagy feszültségesés, nem nyomás
+        self.assertEqual(r.g("light"), None)
+
+    def test_no_pullup_never_presses(self):
+        r = self.rear(0.05)
+        self.click(r, 1, low=0.0)
+        self.assertEqual(r.g("light"), None)
+
+    def test_noise_spike_up_does_not_cause_phantom_press(self):
+        r = self.rear(1.0)
+        r.v.adc[0] = 3.3
+        r.step(1)
+        r.v.adc[0] = 1.0
+        r.step(int(1.0 / STEP))
+        self.assertEqual(r.g("light"), None)
+        self.assertFalse(r.g("btn-state"))
+        self.click(r, 1)
+        self.assertTrue(r.g("light"))
+
+    def test_button_held_at_boot_is_ignored_then_works(self):
+        r = Rear()
+        r.v.adc[0] = 0.0
+        r.idle = 3.3
+        r.step(int(1.0 / STEP))
+        r.v.adc[0] = 3.3
+        r.step(int(1.5 / STEP))
+        self.assertEqual(r.g("light"), None)
+        self.click(r, 1)
+        self.assertTrue(r.g("light"))
+
+    def test_stuck_low_relearns(self):
+        r = self.rear(3.3)
+        self.press(r, 12.0)
+        self.assertFalse(r.g("btn-state"))
+        r.step(int(1.0 / STEP))
+        self.click(r, 1)
+        self.assertTrue(r.g("light"))
+
+    def test_slow_drift_of_idle_level_is_followed(self):
+        r = self.rear(3.3)
+        for k in range(100):  # 2 s alatt 3.3 V -> 1.3 V
+            r.v.adc[0] = 3.3 - 0.02 * k
+            r.step(1)
+        r.idle = 1.3
+        r.v.adc[0] = 1.3
+        r.step(int(1.0 / STEP))
+        self.assertEqual(r.g("light"), None)
+        self.click(r, 1)
+        self.assertTrue(r.g("light"))
+
+    def test_events_are_logged_for_diagnosis(self):
+        r = self.rear(0.6)
+        self.click(r, 1)
+        text = " ".join(str(a) for p in r.v.printed for a in p)
+        self.assertIn("gomb le", text)
+        self.assertIn("gomb fel", text)
+        self.assertIn("lampa BE", text)
+
+    def test_gomb_teszt_runs(self):
+        r = self.rear(0.6)
+        r.i.call("gomb-teszt")
+        self.assertGreaterEqual(len(r.v.printed), 26)
+
+
+class OutputPinTests(unittest.TestCase):
+    def test_outputs_restored_after_adc_app_restart(self):
         r = Rear()
         r.boot_p1()
-        r.v.adc[0] = 0.0
-        r.step(1)
-        r.v.adc[0] = 3.3
+        r.i.set("light", True)
+        r.step(2)
+        self.assertEqual(r.v.out("pin-adc2"), 1)
+        r.v.app_restart()  # App beállítás írása a VESC Tool-ból
+        self.assertEqual(r.v.out("pin-adc2"), None)
         r.step(int(0.6 / STEP))
-        self.assertEqual(r.g("light"), None)
+        self.assertEqual(r.v.out("pin-adc2"), 1)
+        self.assertEqual(r.v.out("pin-ppm"), 1)
+        self.assertEqual(r.v.gpio_mode["pin-adc1"], "pin-mode-analog")
+
+
+class RobustnessTests(unittest.TestCase):
+    def test_control_loop_survives_errors(self):
+        r = Rear()
+        r.boot_p1()
+        r.v.fail_temp = True
+        r.v.adc[0] = 0.0
+        r.v.sleep_budget = int(3.0 / STEP)
+        try:
+            r.i.call("control-loop")
+        except Blocked:
+            pass
+        errors = [p for p in r.v.printed if "hiba-control-step" in str(p)]
+        self.assertTrue(1 <= len(errors) <= 4, errors)  # max 1 kiírás / s
+        self.assertTrue(r.g("btn-state"), "the button is still read every cycle")
 
 
 class BrakeLightTests(unittest.TestCase):
     def test_steady_then_blinking_while_braking(self):
         r = Rear()
         r.boot_p1()
-        self.assertEqual(r.v.gpio["pin-ppm"], 1)
+        self.assertEqual(r.v.out("pin-ppm"), 1)
         r.brk = FULL
         seen = []
         for _ in range(30):
             r.step(1)
-            seen.append(r.v.gpio["pin-ppm"])
+            seen.append(r.v.out("pin-ppm"))
         self.assertEqual(seen[0], 0, "goes dark immediately so the change is visible")
         changes = sum(1 for a, b in zip(seen, seen[1:]) if a != b)
         self.assertGreaterEqual(changes, 4, seen)
         r.brk = IDLE
         r.step(2)
-        self.assertEqual(r.v.gpio["pin-ppm"], 1)
+        self.assertEqual(r.v.out("pin-ppm"), 1)
 
     def test_stale_brake_does_not_blink(self):
         r = Rear()
@@ -345,7 +457,7 @@ class BrakeLightTests(unittest.TestCase):
         r.brk = FULL
         r.step(1)
         r.step(int(1.0 / STEP), frames=False)
-        self.assertEqual(r.v.gpio["pin-ppm"], 1)
+        self.assertEqual(r.v.out("pin-ppm"), 1)
 
 
 class DisplayTests(unittest.TestCase):

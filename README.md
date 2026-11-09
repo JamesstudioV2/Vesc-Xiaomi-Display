@@ -72,7 +72,7 @@ ADC), a script módosítása nélkül.
 | piros | 5V | a kijelző tápja |
 | fekete | GND | |
 | sárga (adat) | **TX** | half-duplex, csak a TX láb kell, az RX szabad marad |
-| zöld (gomb) | **ADC1** | felhúzó ellenállás (1–10 kΩ) az ADC1 és a **3.3V** közé; lenyomva a kijelző GND-re húzza |
+| zöld (gomb) | **ADC1** | **1 kΩ** felhúzó ellenállás az ADC1 és a **3.3V** közé (ha kell, 470 Ω); lenyomva a kijelző GND-re húzza. Ajánlott még 1 µF kondenzátor az ADC1 és a GND közé. |
 
 **Kimenetek** (3,3 V-os logikai jel, N-csatornás MOSFET-tel):
 
@@ -80,6 +80,14 @@ ADC), a script módosítása nélkül.
 |---|---|
 | PPM jel (servo) | féklámpa MOSFET gate |
 | ADC2 | első lámpa MOSFET gate |
+
+**Miért 1 kΩ a felhúzó?** A kijelző a zöld vezetéket nyugalmi állapotban is
+terheli. Az eredeti projektek ezért 1 kΩ-ot használnak, és a „véletlenszerű”
+gombolvasást 470 Ω-mal szüntették meg. Ennél nagyobb felhúzóval (pl. 10 kΩ) a
+nyugalmi feszültség akár 1 V alá is eshet. A script ezt is kezeli (ld.
+[A gomb nem működik](#a-gomb-nem-működik)), de minél nagyobb a különbség a
+nyugalmi és a lenyomott szint között, annál zajtűrőbb a gomb. Az 1 µF-os
+kondenzátor a fantomnyomásokat szűri.
 
 Tanácsok a kimenetekhez:
 - **Logikai szintű** N-FET kell (pl. AO3400, IRLZ44N, IRLML6344), amelyik 3,3 V
@@ -160,7 +168,32 @@ Ha nincs első vezérlő, a hátsó script elején legyen `(def front-enabled ni
 
 A Lisp konzolban (REPL) a `(status)` parancs kiírja a profilt, az állapotot, a
 módot, a sebességet, a nyers és a kalibrált gáz-/fékértéket, a gomb ADC1
-feszültségét és az első vezérlő válaszát.
+feszültségét (aktuális, megtanult nyugalmi, legkisebb, legnagyobb) és az első
+vezérlő válaszát.
+
+Ha a VESC Tool-ban App beállítást írsz, az ADC app újraindul, és a lámpakimenetek
+egy pillanatra elengednek. A script fél másodpercen belül visszaállítja őket.
+
+### A gomb nem működik
+
+1. Csatlakozz a hátsó vezérlőhöz, és nyisd meg a **VESC Dev Tools → Lisp**
+   konzolt. Bekapcsoláskor kiírja: `Profil: 1, gomb nyugalmi feszultseg: X V`.
+2. Írd be: `(gomb-teszt)`, és 5 másodpercig nyomogasd a gombot. A script
+   0,2 s-onként kiírja az ADC1 feszültséget és a megtanult nyugalmi szintet.
+   Lenyomáskor a sor végén `LENYOMVA` jelenik meg.
+3. Minden lenyomásnál és felengedésnél megjelenik egy `gomb le ...` /
+   `gomb fel ...` sor, utána a művelet: `1x -> lampa BE`, `2x -> mod S`.
+
+| Amit látsz | Ok, teendő |
+|---|---|
+| a nyugalmi szint 0,15 V alatt van | nincs felhúzás: ellenőrizd az ellenállást és a 3.3V bekötését, vagy cseréld 1 kΩ-ra / 470 Ω-ra |
+| nyomásra nem esik a nyugalmi szint fele alá | a gomb nem a GND-re húz, vagy túl erős a felhúzó a kijelző belső ellenállásához képest: mérd meg multiméterrel |
+| van `gomb le`/`fel`, de nincs művelet | túl hosszú (1,5 s fölötti) a nyomás, vagy 0,4 s-nál lassabb a dupla nyomás |
+| `1x -> lampa BE` megjelenik, a kijelzőn a lámpa ikon is, de a lámpa nem ég | a hiba az ADC2 kimenetnél vagy a MOSFET-nél van: mérd meg az ADC2 lábon a ~3,3 V-ot |
+| egyáltalán nincs kiírás, `(status)` sem megy | nem fut a script: töltsd fel újra, és nézd meg a hibaüzenetet |
+
+Ha a konzolon `hiba-control-step` jelenik meg, másold ki és küldd el: a script
+hiba esetén is fut tovább, de a hibát jelezni kell.
 
 | Kijelző hibakód | Jelentés |
 |---|---|
@@ -195,8 +228,11 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `p2-detect-throttle`, `p2-detect-hold`, `p2-detect-window`: a 2-es profil
   aktiválásához szükséges gázmérték, tartási idő és időablak.
 - `p2-idle-speed`: e sebesség alatt mutatja a kijelző az akku %-ot a 2-es profilban.
-- `button-pressed-volts`, `double-click-time`, `long-press-time`: a gomb
-  érzékelése.
+- `button-press-ratio`, `button-release-ratio`, `button-min-idle`: a gomb
+  érzékelése. A script a gomb nyugalmi feszültségét magától megtanulja, és az
+  ahhoz képesti esést figyeli (alapból 50% alatt lenyomva, 70% fölött elengedve).
+- `double-click-time`, `long-press-time`: a dupla és a hosszú nyomás időzítése.
+- `button-log`: a gombesemények kiírása a Lisp konzolra (hibakereséshez).
 - `brake-level`, `brake-blink-half`: a féklámpa érzékenysége és villogási
   sebessége.
 - `temp-warn-fet`, `temp-warn-motor`: a hőfok ikon határai.

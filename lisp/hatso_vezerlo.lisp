@@ -20,7 +20,7 @@
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
 ;   kijelző sárga  -> TX (half-duplex adatvonal)
-;   kijelző zöld (gomb) -> ADC1 + felhúzó ellenállás 3.3V-ra
+;   kijelző zöld (gomb) -> ADC1 + 1 kOhm felhúzó ellenállás 3.3V-ra
 ;   PPM jel -> féklámpa MOSFET gate,   ADC2 -> első lámpa MOSFET gate
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
@@ -53,10 +53,16 @@
 (def throttle-released 0.05)  ; 2-es profilban ez alá kell engedni a gázt az induláshoz
 (def p2-idle-speed 1.0)       ; km/h - 2-es profilban ez alatt akku %-ot mutat
 
-; Kijelző gomb (ADC1)
-(def button-pressed-volts 1.0) ; ennél kisebb ADC1 feszültség = lenyomva
+; Kijelző gomb (ADC1, felhúzó ellenállással, lenyomva GND)
+; A script megtanulja a gomb nyugalmi feszültségét, és az ahhoz képesti esést
+; figyeli. Így mindegy, hogy a kijelző és a VESC bemenete mennyire húzza le a
+; vezetéket, és nem kell fix feszültségküszöb.
+(def button-press-ratio 0.5)   ; lenyomva: a nyugalmi feszültség 50%-a alatt
+(def button-release-ratio 0.7) ; elengedve: a nyugalmi feszültség 70%-a fölött
+(def button-min-idle 0.15)     ; V - ennél kisebb nyugalmi szintnél nincs felhúzás, nem figyeljük
 (def double-click-time 0.4)    ; s - ennyi idő alatt jöhet a második nyomás
 (def long-press-time 1.5)      ; s - ennél hosszabb nyomás nem számít kattintásnak
+(def button-log t)             ; t = gombesemények kiírása a VESC Tool Lisp konzolra
 
 ; Féklámpa (PPM)
 (def brake-level 0.05)         ; fékkar (0-1) e fölött = fékezés
@@ -106,13 +112,18 @@
 (def thr-hold-start 0)
 (def thr-release-start 0)
 (def btn-state nil)
-(def btn-last-raw nil)
+(def btn-cnt 0)
+(def btn-v 0.0)
+(def btn-idle-v -1.0)          ; tanult nyugalmi feszültség, -1 = még nincs
+(def btn-min-v 9.9)
+(def btn-max-v 0.0)
 (def btn-clicks 0)
 (def btn-press-time 0)
 (def btn-release-time 0)
 (def btn-long-done nil)
 (def t-front 0)
 (def t-slow 0)
+(def t-err 0)
 
 @const-start
 
@@ -311,39 +322,90 @@
 
 ; -> Gomb (ADC1)
 
+(defun button-log-msg (what) ; csak ASCII a konzolra
+    (if button-log
+        (print (str-merge "gomb " what ": " (str-from-n btn-v "%.2f")
+                " V (alap " (str-from-n btn-idle-v "%.2f") " V)")))
+)
+
 (defun button-action (clicks)
     (if (= clicks 1)
-        (setq light (not light))
+        {
+            (setq light (not light))
+            (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
+        }
         { ; 2 vagy több nyomás: D -> S -> ECO -> D
             (setq speedmode (cond ((= speedmode 1) 4) ((= speedmode 4) 2) (t 1)))
             (apply-mode)
             (setq beep-count 1)
+            (button-log-msg (str-merge (str-from-n clicks "%d") "x -> mod "
+                    (cond ((= speedmode 2) "ECO") ((= speedmode 4) "S") (t "D"))))
         }
 ))
 
 (defun button-step () {
-        (var raw (< (get-adc 0) button-pressed-volts))
-        (if (and (eq raw btn-last-raw) (not (eq raw btn-state))) { ; 2 egyforma minta = pergésmentes
+        (var v (get-adc 0))
+        (setq btn-v v)
+        (if (< v btn-min-v) (setq btn-min-v v))
+        (if (> v btn-max-v) (setq btn-max-v v))
+        (if (< btn-idle-v 0.0) (setq btn-idle-v v)) ; első minta
+        ; lenyomva = a tanult nyugalmi szinthez képest nagy esés (hiszterézissel)
+        (var raw
+            (if btn-state
+                (< v (* btn-idle-v button-release-ratio))
+                (and (> btn-idle-v button-min-idle) (< v (* btn-idle-v button-press-ratio)))))
+        ; a nyugalmi szintet csak elengedett gombnál tanuljuk (lassan, a zaj ellen)
+        (if (and (not btn-state) (not raw))
+            (setq btn-idle-v (+ btn-idle-v (* 0.05 (- v btn-idle-v)))))
+        ; pergésmentesítés: lenyomás 3, elengedés 2 egymás utáni minta (20 ms-onként)
+        (if (eq raw btn-state)
+            (setq btn-cnt 0)
+            (setq btn-cnt (+ btn-cnt 1)))
+        (if (>= btn-cnt (if raw 3 2)) {
+                (setq btn-cnt 0)
                 (setq btn-state raw)
                 (if raw
                     {
                         (setq btn-press-time (systime))
                         (setq btn-long-done nil)
+                        (button-log-msg "le")
                     }
-                    (if (not btn-long-done) {
-                            (setq btn-clicks (+ btn-clicks 1))
-                            (setq btn-release-time (systime))
-                    }))
+                    {
+                        (button-log-msg "fel")
+                        (if (not btn-long-done) {
+                                (setq btn-clicks (+ btn-clicks 1))
+                                (setq btn-release-time (systime))
+                        })
+                    })
         })
-        (setq btn-last-raw raw)
         (if (and btn-state (not btn-long-done) (> (secs-since btn-press-time) long-press-time)) {
                 (setq btn-long-done t) ; hosszú nyomás: nincs funkció, eldobjuk
                 (setq btn-clicks 0)
+                (button-log-msg "hosszu nyomas, eldobva")
+        })
+        ; 10 s-nál tovább "lenyomva": valószínűleg rossz a tanult szint, újratanuljuk
+        (if (and btn-state (> (secs-since btn-press-time) 10.0)) {
+                (setq btn-state nil)
+                (setq btn-cnt 0)
+                (setq btn-idle-v v)
+                (button-log-msg "beragadt, ujratanulas")
         })
         (if (and (not btn-state) (> btn-clicks 0) (> (secs-since btn-release-time) double-click-time)) {
                 (button-action btn-clicks)
                 (setq btn-clicks 0)
         })
+})
+
+; REPL-ből hívható: (gomb-teszt) - 5 másodpercig írja az ADC1 feszültséget
+(defun gomb-teszt () {
+        (print "Gomb teszt 5 s: nyomogasd a gombot")
+        (looprange i 0 25 {
+                (print (str-merge (str-from-n (get-adc 0) "%.2f") " V  alap "
+                        (str-from-n btn-idle-v "%.2f") " V" (if btn-state "  LENYOMVA" "")))
+                (sleep 0.2)
+        })
+        (print (str-merge "min " (str-from-n btn-min-v "%.2f") " V, max "
+                (str-from-n btn-max-v "%.2f") " V"))
 })
 
 ; -> Lámpák
@@ -377,7 +439,8 @@
                 (app-disable-output 0)
                 (setq state 'run)
             })
-        (print (str-merge "Profil: " (str-from-n p "%d")))
+        (print (str-merge "Profil: " (str-from-n p "%d")
+                ", gomb nyugalmi feszultseg: " (str-from-n btn-idle-v "%.2f") " V"))
 })
 
 (defun detect-step (thr) {
@@ -440,6 +503,11 @@
         })
         (if (> (secs-since t-slow) 0.5) {
                 (setq t-slow (systime))
+                ; Az ADC app minden újraindításkor (pl. App beállítás írása a VESC
+                ; Tool-ból) analóg bemenetre állítja az ADC lábakat, ezért a
+                ; kimeneteket újra beállítjuk. A kimeneti szint nem változik.
+                (gpio-configure 'pin-ppm 'pin-mode-out)
+                (gpio-configure 'pin-adc2 'pin-mode-out)
                 (refresh-gate)
                 (update-temp-warn)
                 (update-front-warn)
@@ -448,7 +516,12 @@
 
 (defun control-loop ()
     (loopwhile t {
-            (control-step)
+            ; egy váratlan hiba ne állítsa le a gombot és a lámpákat: kiírjuk és megyünk tovább
+            (var res (trap (control-step)))
+            (if (and (eq (car res) 'exit-error) (> (secs-since t-err) 1.0)) {
+                    (setq t-err (systime))
+                    (print (list 'hiba-control-step (cdr res)))
+            })
             (sleep 0.02)
 }))
 
@@ -458,7 +531,9 @@
             (list 'profil profile 'allapot state 'mod speedmode)
             (list 'km/h (speed-kmh) 'berugva kick-engaged 'gaz-fogva thr-gate)
             (list 'gaz-nyers thr-raw 'fek-nyers brk-raw 'keretek lever-frames)
-            (list 'gaz (get-adc-decoded 0) 'fek (get-adc-decoded 1) 'gomb-V (get-adc 0))
+            (list 'gaz (get-adc-decoded 0) 'fek (get-adc-decoded 1))
+            (list 'gomb-V (get-adc 0) 'gomb-alap btn-idle-v 'gomb-min btn-min-v 'gomb-max btn-max-v
+                'lenyomva btn-state 'lampa light)
             (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn)
 )))
 

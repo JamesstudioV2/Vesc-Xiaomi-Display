@@ -150,6 +150,19 @@ class Vesc:
         self.can_temp_mot = {}
         self.printed = []
         self.events = []
+        self.sleep_budget = None   # number of sleeps before Blocked is raised
+        self.fail_temp = False     # get-temp-fet raises an error
+
+    def out(self, pin):
+        """Level actually driven on the pin: only an output drives its ODR value."""
+        if self.gpio_mode.get(pin) != "pin-mode-out":
+            return None
+        return self.gpio.get(pin)
+
+    def app_restart(self):
+        """What app_adc_start does when the app config is written from VESC Tool."""
+        self.gpio_mode["pin-adc1"] = "pin-mode-analog"
+        self.gpio_mode["pin-adc2"] = "pin-mode-analog"
 
     def decoded(self, ch):
         start = self.conf["adc-v1-start" if ch == 0 else "adc-v2-start"]
@@ -415,6 +428,10 @@ class Interp:
             return (systime() - t) / Vesc.TICKS
 
         def sleep(s):
+            if v.sleep_budget is not None:
+                if v.sleep_budget <= 0:
+                    raise Blocked()
+                v.sleep_budget -= 1
             v.now += s
             return True
 
@@ -458,10 +475,15 @@ class Interp:
             return True
 
         def gpio_write(pin, val):
-            if v.gpio_mode.get(pin) != "pin-mode-out":
-                raise LispError("gpio-write to %s which is not an output" % pin)
-            v.gpio[pin] = need_int(val, 0, 1, "gpio-write")
+            if pin not in v.gpio_mode:
+                raise LispError("gpio-write to %s which was never configured" % pin)
+            v.gpio[pin] = need_int(val, 0, 1, "gpio-write")  # ODR, see Vesc.out()
             return True
+
+        def get_temp_fet():
+            if v.fail_temp:
+                raise LispError("eval_error (injected)")
+            return v.temp_fet
 
         def show(*a):
             v.printed.append(a)
@@ -475,6 +497,8 @@ class Interp:
             "not": lambda a: lbool(not truthy(a)),
             "eq": lambda a, b: lbool(a == b),
             "list": lambda *a: list(a),
+            "car": lambda lst: lst[0] if lst else None,
+            "cdr": lambda lst: lst[1:] if lst else None,
             "ix": lambda lst, i: lst[i],
             "length": lambda lst: len(lst or []),
             "abs": lambda x: abs(num(x)),
@@ -508,7 +532,7 @@ class Interp:
             "can-list-devs": lambda: list(v.can_devs),
             "canget-temp-fet": lambda i: v.can_temp_fet.get(i, 0.0),
             "canget-temp-motor": lambda i: v.can_temp_mot.get(i, 0.0),
-            "get-temp-fet": lambda: v.temp_fet,
+            "get-temp-fet": get_temp_fet,
             "get-temp-mot": lambda: v.temp_mot,
             "get-batt": lambda: v.batt,
             "get-fault": lambda: v.fault,

@@ -46,7 +46,7 @@
   <polyline points="290,228 282,231 298,237 282,243 298,249 290,252" fill="none" stroke="#212121" stroke-width="2"/>
   <line x1="290" y1="252" x2="290" y2="260" stroke="#212121" stroke-width="2"/>
   <line x1="290" y1="260" x2="330" y2="260" stroke="#212121" stroke-width="2"/>
-  <text x="282" y="290" text-anchor="end" font-size="12">1–10 kΩ</text>
+  <text x="282" y="290" text-anchor="end" font-size="12">1 kΩ</text>
   <text x="282" y="305" text-anchor="end" font-size="12">felhúzó</text>
 
   <!-- első lámpa fokozat -->
