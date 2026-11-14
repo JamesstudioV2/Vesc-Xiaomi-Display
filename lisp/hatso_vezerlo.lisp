@@ -26,8 +26,10 @@
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
 ;   kijelző sárga  -> TX (half-duplex adatvonal)
 ;   kijelző zöld (gomb) -> RX + 470 Ohm felhúzó ellenállás 3.3V-ra
-;   PPM jel -> féklámpa MOSFET gate,   ADC2 -> első lámpa MOSFET gate
-;   ADC1 -> szabad (10 kOhm-mal GND-re ajánlott)
+;   PPM jel -> féklámpa MOSFET gate
+;   ADC1, ADC2 -> szabad (10 kOhm-mal GND-re ajánlott)
+;   Első lámpa: az ELSŐ vezérlő PPM lábán (MOSFET gate), CAN-en kapcsolva
+;   (headlight-on-front). nil esetén a régi módon a hátsó ADC2 lábán.
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
 ; Részletes leírás és VESC Tool beállítások: README.md
@@ -47,6 +49,9 @@
 
 (def boot-mode 1)             ; induló mód: 1 = D, 2 = ECO, 4 = S
 (def light-default nil)       ; első lámpa induláskor: t = be, nil = ki
+(def headlight-on-front t)    ; t = a lámpa MOSFET az első vezérlő PPM lábán (CAN-en kapcsolva),
+                              ; nil = a hátsó vezérlő ADC2 lábán (sok lapon az ADC bemenet
+                              ; védőellenállásai miatt ez nem tud MOSFET-et kapcsolni)
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -226,6 +231,7 @@
 })
 
 ; 8 bájt: A5, flags, áram %, km/h*10 (u16), watt/100 (u16), profil
+; flags: bit0 = hajtás, bit1 = fék, bit2 = első lámpa
 (defun send-front ()
     (if front-enabled {
             (var lim (mode-limits profile speedmode))
@@ -235,7 +241,7 @@
                     (setq front-flags-time (systime))
             })
             (bufset-u8 can-tx 0 0xA5)
-            (bufset-u8 can-tx 1 flags)
+            (bufset-u8 can-tx 1 (+ flags (if (and headlight-on-front light) 4 0))) ; bit2 = első lámpa
             (bufset-u8 can-tx 2 (to-i (round (* 100.0 (ix lim 2)))))
             (bufset-u16 can-tx 3 (to-i (round (* 10.0 (ix lim 0)))))
             (bufset-u16 can-tx 5 (to-i (round (/ (ix lim 1) 100.0))))
@@ -413,6 +419,7 @@
     (if (= clicks 1)
         {
             (setq light (not light))
+            (send-front) ; az első vezérlő azonnal kapcsolja a lámpát
             (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
         }
         (if (balancing)
@@ -482,7 +489,7 @@
             })
             (setq blink-on t)) ; nem fékez: folyamatosan világít
         (gpio-write 'pin-ppm (if blink-on 1 0))
-        (gpio-write 'pin-adc2 (if light 1 0))
+        (if (not headlight-on-front) (gpio-write 'pin-adc2 (if light 1 0)))
 })
 
 ; -> Balansz mód (egykerekezés, csak 2-es profilban)
@@ -739,7 +746,7 @@
                 ; lábat bemenetre állítja. Ezért a lábakat újra beállítjuk, a
                 ; kimeneti szint közben nem változik.
                 (gpio-configure 'pin-ppm 'pin-mode-out)
-                (gpio-configure 'pin-adc2 'pin-mode-out)
+                (if (not headlight-on-front) (gpio-configure 'pin-adc2 'pin-mode-out))
                 (gpio-configure button-pin 'pin-mode-in-pu)
                 (refresh-gate)
                 (update-temp-warn)
@@ -781,8 +788,10 @@
 
         (gpio-configure 'pin-ppm 'pin-mode-out)     ; féklámpa
         (gpio-write 'pin-ppm 1)
-        (gpio-configure 'pin-adc2 'pin-mode-out)    ; első lámpa
-        (gpio-write 'pin-adc2 (if light 1 0))
+        (if (not headlight-on-front) {               ; első lámpa a hátsó ADC2-n (régi mód)
+                (gpio-configure 'pin-adc2 'pin-mode-out)
+                (gpio-write 'pin-adc2 (if light 1 0))
+        })
 
         ; uart-read-bytes az olvasott bájtok után egy 0-t is ír, ezért +1 hely kell
         (def rx-one (bufcreate 2))

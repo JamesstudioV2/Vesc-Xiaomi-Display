@@ -19,7 +19,10 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 - Bluetooth: a kijelző BLE-je **nem** használható VESC Tool-hoz. Javaslat: VESC Express a CAN-en (kész modul, vagy
   DIY ESP32-S3 + SN65HVD230, a `S3 N16R8` / `S3 FH4R2` target CAN-je GPIO16 TX / GPIO17 RX). README: „Bluetooth (VESC Tool)”.
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
-- Első lámpa: **ADC2** láb → N-FET, a gombbal kapcsolható.
+- Első lámpa: az **első vezérlő PPM lábán** → N-FET (`headlight-on-front` t). A hátsó a CAN parancs flags 2-es
+  bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad, az ack csak a
+  korlát-flageket adja vissza). A hátsó ADC2-n nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet
+  védő/szűrő köre a lapon). `headlight-on-front nil` = régi ADC2-es mód. Minden ágon (main, Balance, Advanced-Balance).
 - Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
 - Dual: a hátsó ADC app „Multiple VESCs over CAN”, az első vezérlőn `elso_vezerlo.lisp`, saját CAN SID protokoll (0x4D0 parancs, 0x4D1 ack).
 - Profilok: P1 (alap, „rendőr”) = csak hátsó motor, 3 km/h berúgás, ECO 6 km/h/100 W, S 25 km/h/500 W.
@@ -85,6 +88,9 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 - 2026-11-09: **Balance ág** létrehozva: balansz mód (egykerekes indulás), részletek fent. 67 teszt átmegy.
   Módosítva (felhasználói kérés): gázkitartás 70%, 30 km/h-nál sípolás + lejjebb engedés (nem nullára), kilépés 35-nél.
   69 teszt átmegy. A felhasználónak irányteszt kell felemelt hátsó kerékkel (README „Első próbák”), utána óvatos hangolás.
+- 2026-11-14: Felhasználói jelzés: a lámpa MOSFET a hátsó **ADC2**-n nem kapcsol, a PPM (féklámpa) működik.
+  A hiba hardveres (az ADC bemenet védő/szűrő köre). A lámpa átkerült az **első vezérlő PPM lábára** (CAN flags bit2)
+  a `main`-en, és átvezetve ide is (balansz alatt is kapcsolható, a front-flags 0 mellett is megy a bit2).
 
 ## Következő lépések
 1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
