@@ -132,7 +132,8 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r.v.detached, (3, 1))
         self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
         self.assertEqual(r.v.out("pin-ppm"), 1, "tail light on from boot")
-        self.assertEqual(r.v.out("pin-adc2"), 0, "headlight off at boot")
+        self.assertNotIn("pin-adc2", r.v.gpio_mode, "ADC2 is not driven: the headlight is on the front")
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0, "headlight off at boot")
         self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu", "button input")
         self.assertAlmostEqual(r.v.conf["max-speed"], 20 / 3.6)  # P1 D until decided
 
@@ -294,11 +295,24 @@ class ButtonTests(unittest.TestCase):
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
         self.assertTrue(r.g("light"))
-        self.assertEqual(r.v.out("pin-adc2"), 1)
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 4, "headlight bit to the front ESC")
+        self.assertEqual(r.v.can_tx[-1][1][1] & 3, 0, "limit flags unchanged (P1)")
         self.assertEqual(r.last_dash()[8], 1)
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0)
+
+    def test_legacy_headlight_on_rear_adc2(self):
+        r = Rear()
+        r.i.set("headlight-on-front", None)
+        r.i.call("init")
+        r.v.gpio_in["pin-rx"] = 1
+        r.boot_p1()
         self.assertEqual(r.v.out("pin-adc2"), 0)
+        self.press(r, 0.1)
+        r.step(int(0.5 / STEP))
+        self.assertEqual(r.v.out("pin-adc2"), 1)
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0)
 
     def test_double_click_cycles_modes(self):
         r = self.rear()
@@ -386,14 +400,10 @@ class OutputPinTests(unittest.TestCase):
     def test_pins_restored_after_app_restart(self):
         r = Rear()
         r.boot_p1()
-        r.i.set("light", True)
         r.step(2)
-        self.assertEqual(r.v.out("pin-adc2"), 1)
         r.v.app_restart()  # App típus vagy Servo Output változott a VESC Tool-ban
-        self.assertEqual(r.v.out("pin-adc2"), None)
         self.assertEqual(r.v.out("pin-ppm"), None)
         r.step(int(0.6 / STEP))
-        self.assertEqual(r.v.out("pin-adc2"), 1)
         self.assertEqual(r.v.out("pin-ppm"), 1)
         self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu")
 
@@ -529,6 +539,34 @@ class FrontTests(unittest.TestCase):
         self.f.call("on-cmd", bytearray(r1.v.can_tx[-1][1]))
         self.assertEqual(self.fv.conf["l-current-max-scale"], 0.0, "P1: front drive off")
         self.assertEqual(self.fv.conf["l-current-min-scale"], 0.0, "P1: front brake off")
+
+    def test_headlight_on_front_ppm(self):
+        self.assertEqual(self.fv.out("pin-ppm"), 0, "off at boot")
+        self.f.call("on-cmd", bytearray([0xA5, 3 | 4, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
+        self.assertEqual(self.fv.out("pin-ppm"), 1)
+        self.assertEqual(self.fv.conf["l-current-max-scale"], 1.0, "light bit is not a limit flag")
+        sid, ack = self.fv.can_tx[-1]
+        self.assertEqual(ack[1], 3, "ack echoes only the limit flags")
+        n = len(self.fv.conf_log)
+        self.f.call("on-cmd", bytearray([0xA5, 3, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
+        self.assertEqual(self.fv.out("pin-ppm"), 0)
+        self.assertEqual(len(self.fv.conf_log), n, "toggling the light rewrites no config")
+
+    def test_headlight_survives_rear_silence_and_app_restart(self):
+        self.f.call("on-cmd", bytearray([0xA5, 3 | 4, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
+        self.fv.now += 2.0
+        self.fv.gpio_mode["pin-ppm"] = "pin-mode-in"  # pwm_servo_stop
+        self.f.call("watchdog-step")
+        self.assertEqual(self.fv.out("pin-ppm"), 1)
+        self.assertEqual(self.fv.conf["l-current-max-scale"], 0.0, "motor still disabled")
+
+    def test_rear_light_toggle_reaches_front(self):
+        r = Rear()
+        r.boot_p1()
+        r.i.set("light", True)
+        r.step(6)
+        self.f.call("on-cmd", bytearray(r.v.can_tx[-1][1]))
+        self.assertEqual(self.fv.out("pin-ppm"), 1)
 
     def test_timeout_disables_front(self):
         self.f.call("on-cmd", bytearray([0xA5, 3, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
