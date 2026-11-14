@@ -37,7 +37,7 @@ A „korlátlan” 1000 km/h-s és 1 500 000 W-os korlátot jelent. Ilyenkor a V
 Tool-ban beállított motoráram- és akkuáram-limitek maradnak érvényben.
 
 **Kijelző gomb (a kijelzőben, zöld vezeték → RX):**
-- 1x nyomás: első lámpa ki/be (ADC2 kimenet + lámpa ikon).
+- 1x nyomás: első lámpa ki/be (az első vezérlő PPM kimenete + lámpa ikon).
 - 2x gyors nyomás: módváltás **D → S → ECO → D**, 1 sípolással.
 - Hosszú (1,5 s-nál hosszabb) nyomás: nincs funkciója.
 
@@ -80,10 +80,20 @@ induláskor, a script elindulása előtt az ADC app ne lebegő bemenetet olvasso
 
 **Kimenetek** (3,3 V-os logikai jel, N-csatornás MOSFET-tel):
 
-| Láb | Fogyasztó |
+| Vezérlő, láb | Fogyasztó |
 |---|---|
-| PPM jel (servo) | féklámpa MOSFET gate |
-| ADC2 | első lámpa MOSFET gate |
+| hátsó, PPM jel (servo) | féklámpa MOSFET gate |
+| **első**, PPM jel (servo) | első lámpa MOSFET gate (a hátsó CAN-en kapcsolja) |
+
+**Miért nem az ADC2-n van a lámpa?** A firmware engedi az ADC lábat
+kimenetnek állítani (`gpio-configure`), és a script ezt csinálta is. Sok VESC
+lapon viszont az ADC bemenetek elé védő- és szűrőkör kerül (soros ellenállás,
+osztó vagy lehúzó ellenállás, kondenzátor), hogy 5 V-os gázkart is el lehessen
+viselni. Ezen keresztül a láb nem tud elég feszültséget vagy áramot adni egy
+MOSFET gate-jének. A PPM láb közvetlenebbül megy a processzorra, a hátsón ez
+működik is, ezért a lámpa az első vezérlő ugyanilyen PPM lábára került. Ha
+mégis a hátsó ADC2-t szeretnéd: `(def headlight-on-front nil)`, és mérd meg a
+lábon a ~3,3 V-ot bekapcsolt lámpánál.
 
 **Miért ilyen kicsi (470 Ω) a felhúzó?** A kijelző a zöld vezetéket
 nyugalmi állapotban is terheli. Az eredeti projektek 1 kΩ-ot használnak, és a
@@ -97,8 +107,6 @@ Tanácsok a kimenetekhez:
 - Tegyél 10–100 kΩ-os **gate–GND lehúzó ellenállást**, hogy a lámpa ne
   villanjon fel, amíg a VESC bootol.
 - Ha induktív a terhelés (relé), szabadonfutó diódát is tegyél mellé.
-- Egyes VESC lapokon az ADC bemeneteken soros ellenállás vagy osztó van. Mérd
-  meg, hogy bekapcsolt lámpánál tényleg ~3,3 V van-e az ADC2 lábon.
 - Ha a lámpa a kijelzővel közös 5 V-ról kap tápot, a feszültségesés elhúzhatja
   a gáz- és fékértéket. Ilyenkor külön tápról járasd a lámpát.
 
@@ -156,6 +164,7 @@ app) van beállítva, a script UART-indítása a firmware-ben véglegesen
 
 ### Első vezérlő
 - **App to Use:** `No App`. A parancsokat a hátsó ADC app küldi CAN-en.
+- **Servo Output:** kikapcsolva, mert a PPM lábat a lámpa kapcsolja.
 - A CAN státuszüzenetek maradjanak bekapcsolva (alapértelmezés), mert ebből látja
   a hátsó vezérlő az első hőmérsékletét és azt, hogy jelen van.
 
@@ -198,7 +207,7 @@ a firmware újraindítja az appokat, és közben a lámpák és a gomb lábait i
 | mindig `lab = 0` | a zöld vezeték folyamatosan GND-n van, vagy nincs felhúzás: ellenőrizd a 470 Ω-ot és a 3.3V-ot, és hogy tényleg az RX lábon van-e |
 | mindig `lab = 1`, nyomásra sem változik | a gomb nem ezt a vezetéket húzza le, vagy a zöld vezeték nem az RX-en van: mérd meg multiméterrel nyomás közben |
 | van `gomb le`/`fel`, de nincs művelet | túl hosszú (1,5 s fölötti) a nyomás, vagy 0,4 s-nál lassabb a dupla nyomás |
-| `1x -> lampa BE` megjelenik, a kijelzőn a lámpa ikon is, de a lámpa nem ég | a hiba az ADC2 kimenetnél vagy a MOSFET-nél van: mérd meg az ADC2 lábon a ~3,3 V-ot |
+| `1x -> lampa BE` megjelenik, a kijelzőn a lámpa ikon is, de a lámpa nem ég | fut-e az első vezérlőn az új `elso_vezerlo.lisp`, és bekapcsolt lámpánál ~3,3 V van-e az első vezérlő PPM lábán |
 | egyáltalán nincs kiírás, `(status)` sem megy | nem fut a script: töltsd fel újra, és nézd meg a hibaüzenetet |
 
 Ha a konzolon `hiba-control-step` jelenik meg, másold ki és küldd el: a script

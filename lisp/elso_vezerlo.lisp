@@ -9,17 +9,22 @@
 ;   2-es profil: hajtás és fék be, ugyanazok a sebesség/watt/áram korlátok,
 ;                mint a hátsón
 ; Ha 1 másodpercig nem jön üzenet (vagy induláskor), az első motor tiltva van.
+; Az első lámpa MOSFET-je ennek a vezérlőnek a PPM lábán van (light-pin), a
+; hátsó a CAN üzenet flags 2-es bitjével kapcsolja. Üzenetkiesésnél a lámpa
+; az utolsó állapotában marad (ne aludjon ki menet közben).
 ; =============================================================================
 
 (def cmd-sid 0x4D0)   ; hátsó -> első (egyezzen a hátsó script front-cmd-sid értékével)
 (def ack-sid 0x4D1)   ; első -> hátsó (front-ack-sid)
 (def rx-timeout 1.0)  ; s
+(def light-pin 'pin-ppm) ; az első lámpa MOSFET gate-je (App to Use: No App, Servo Output: ki)
 
 (def last-rx 0)
 (def cur-flags -1)
 (def cur-scale -1)
 (def cur-kmh10 -1)
 (def cur-watt100 -1)
+(def front-light nil)
 
 @const-start
 
@@ -42,7 +47,9 @@
 (defun on-cmd (data)
     (if (and (>= (buflen data) 8) (= (bufget-u8 data 0) 0xA5)) {
             (setq last-rx (systime))
-            (apply-limits (bufget-u8 data 1) (bufget-u8 data 2)
+            (setq front-light (= (bitwise-and (bufget-u8 data 1) 4) 4))
+            (gpio-write light-pin (if front-light 1 0))
+            (apply-limits (bitwise-and (bufget-u8 data 1) 3) (bufget-u8 data 2)
                 (bufget-u16 data 3) (bufget-u16 data 5))
             (bufset-u8 ack 0 0xA5)
             (bufset-u8 ack 1 cur-flags)
@@ -58,13 +65,17 @@
             (_ nil)
 )))
 
-(defun watchdog-step ()
+(defun watchdog-step () {
+    ; ha egy App vagy Servo Output váltás visszaállítaná, újra kimenet
+    (gpio-configure light-pin 'pin-mode-out)
     (if (and (> (secs-since last-rx) rx-timeout) (not (= cur-flags 0)))
         (apply-limits 0 cur-scale cur-kmh10 cur-watt100))
-)
+})
 
 (defun init () {
         (def ack (bufcreate 3))
+        (gpio-configure light-pin 'pin-mode-out)
+        (gpio-write light-pin 0)
         (apply-limits 0 0 250 5) ; induláskor tiltva, amíg a hátsó nem szól
         (event-register-handler (spawn event-loop))
         (event-enable 'event-can-sid)
