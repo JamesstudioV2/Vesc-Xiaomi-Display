@@ -249,6 +249,11 @@ Két külön lámpa van: a **kijelző saját lámpája** (a kijelző kapcsolja a
 hátsótól kapott lámpa mező alapján) és a **külső lámpa** az első vezérlő PPM
 lábán (MOSFET). Az ikon mindkettőtől függetlenül kigyullad.
 
+> **Bekötés:** a külső lámpa N-FET gate-je az **első** vezérlő PPM (servo)
+> csatlakozójának **jel** lábára kell kerüljön, nem a hátsóra, és a két
+> vezérlő GND-je közös legyen. A rajz korábbi változatán a gate vezetéke a
+> hátsó vezérlőtől indult, ez félrevezető volt.
+
 1. **Kijelző lámpája:** a scriptnek 100-at kell küldenie (`dash-light-value`).
    Ha a régi script fut még, csak az ikon gyullad ki: töltsd fel újra a hátsó
    scriptet.
