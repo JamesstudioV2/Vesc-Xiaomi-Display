@@ -20,9 +20,30 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   DIY ESP32-S3 + SN65HVD230, a `S3 N16R8` / `S3 FH4R2` target CAN-je GPIO16 TX / GPIO17 RX). README: „Bluetooth (VESC Tool)”.
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
 - Első lámpa: az **első vezérlő PPM lábán** → N-FET (`headlight-on-front` t). A hátsó a CAN parancs flags 2-es
-  bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad, az ack csak a
-  korlát-flageket adja vissza). A hátsó ADC2-n nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet
-  védő/szűrő köre a lapon). `headlight-on-front nil` = régi ADC2-es mód. Minden ágon (main, Balance, Advanced-Balance).
+  bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad). A hátsó ADC2-n
+  nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet védő/szűrő köre a lapon).
+  `headlight-on-front nil` = régi ADC2-es mód. Minden ágon (main, Balance, Advanced-Balance).
+- Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
+  lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
+- CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
+  bit1 BNO friss, bit2 lámpa láb visszaolvasva), script-verzió (2), első sebesség (i16, 0,1 km/h). A hátsó
+  `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)` mindkét
+  vezérlőn, `(tc-teszt)` a hátsón, `(bno)` az elsőn.
+- Kipörgésgátló (minden ágon egységesen): csak 2-es profilban, induláskor be, **3 kattintás** = be/ki + 3 sípolás.
+  `tc-slip` 2 km/h engedélyezett különbség, `tc-range` 3 km/h alatt 0-ig, `tc-recover` 0,3 s visszaállás. A gyorsabb
+  kerék `l-current-max-scale`-jét csökkenti (hátsó helyben, első a CAN parancs áram %-ában; ez a VESC „instant”
+  conf-útja). Az ADC app saját TC-jét induláskor kikapcsolja (app-paraméter `conf-set` menet közben a Safe Start
+  miatt elvenné a gázt, ld. referencia-elemzés). 2-es profilban a parancs 50 Hz-en megy. Sípolások között
+  legalább 0,15 s (`beep-spacing`). 4+ kattintás: nincs funkció.
+- BNO085 (a felhasználó „BMO085”-öt írt, a „COM2” portra kötötte): a VESC Tool nem ismeri. Feltételezés: a COM1 a
+  hátsó, a COM2 az **első vezérlő COMM portja** (a 7.00-s Lisp csak a COMM portot éri el UART-ként, a második
+  BLE/permanent UART lábait egyáltalán nem). Meghajtó az `elso_vezerlo.lisp`-ben: I2C SHTP (SDA = RX, SCL = TX,
+  cím 0x4A/0x4B, soft reset, hirdetés kiolvasása, game rotation vector 0x08 100 Hz) vagy UART-RVC; roll/pitch/yaw
+  CAN SID **0x4D2**-n (i16, 0,01°). `bno-enabled` main-en nil, a balansz ágakon t. Valódi szenzoron nincs kipróbálva.
+- **Balance ág, IMU:** `imu-source 'bno085` (alap) = az első vezérlő BNO085-je CAN-en (0x4D2, `on-imu-frame`),
+  a szögsebesség a mintasorszámokból (`imu-period` 0,01 s), 0,1 s-nál régebbi adat = nincs IMU (balansz nem
+  indul / `imu` okkal kilép). `'vesc` = a VESC belső IMU-ja (a régi tesztek ezzel futnak). Balansz alatt a
+  kipörgésgátló nem aktív, az `apply-scale`/`apply-mode-limits` nem nyúl a balansz korlátaihoz.
 - Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
 - Dual: a hátsó ADC app „Multiple VESCs over CAN”, az első vezérlőn `elso_vezerlo.lisp`, saját CAN SID protokoll (0x4D0 parancs, 0x4D1 ack).
 - Profilok: P1 (alap, „rendőr”) = csak hátsó motor, 3 km/h berúgás, ECO 6 km/h/100 W, S 25 km/h/500 W.
@@ -57,6 +78,8 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 - `docs/bekotes.svg`: bekötési rajz.
 - `tools/lisp_check.py` + `tools/fw7_00_symbols.txt`: statikus ellenőrző (`python3 tools/lisp_check.py lisp/*.lisp`).
 - `tests/lbm_sim.py` + `tests/test_scripts.py`: LispBM-részhalmaz szimulátor és tesztek (`python3 -m unittest discover -s tests`).
+  `tests/test_lamp_tc.py` (lámpa, kipörgésgátló, két vezérlő CAN-en összekötve), `tests/test_bno085.py` (BNO085).
+  `tests/test_balance_bno.py` (Balance ág: BNO085 szög CAN-en, TC balansz közben).
 
 ## Állapot
 - 2026-11-09: Repó létrehozva. A korábbi beszélgetés kódja elveszett, újrakezdés.
@@ -92,8 +115,15 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   A hiba hardveres (az ADC bemenet védő/szűrő köre). A lámpa átkerült az **első vezérlő PPM lábára** (CAN flags bit2)
   a `main`-en, és átvezetve ide is (balansz alatt is kapcsolható, a front-flags 0 mellett is megy a bit2).
 
+- 2026-11-18: `main` beolvasztva (lámpa 0x64, visszajelzés v2, 60-as hiba, kipörgésgátló 3 kattintással, BNO085
+  meghajtó az első scriptben). Itt: BNO085 a balansz szöge (`imu-source`), balansz alatt nincs TC és nincs
+  mód-korlát írás. Az első script `bno-first` javítása (azonnali első keresés) a main-re is átkerül. 123 teszt átmegy.
+
 ## Következő lépések
-1. Gomb: visszajelzés kell, működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
+1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
+   `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+   BNO085: meg kell erősíteni, hogy a „COM2” az első vezérlő COMM portja, és I2C-n van-e bekötve.
+   Gomb: működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
 2. Hardveres próba felemelt kerékkel (README „Első próba” lista), visszajelzés a felhasználótól.
 3. A becsült értékek (P1 D, P2 ECO, P1 első fék) megerősítése vagy javítása.
 4. Lehetséges bővítések: halvány hátsó lámpa PWM-mel (`pwm-start` a PPM lábon), tempomat, zár mód, BMS,

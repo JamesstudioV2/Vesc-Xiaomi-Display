@@ -10,7 +10,15 @@ Run:  python3 -m unittest discover -s tests -v
 import math
 import unittest
 
+from lbm_sim import Symbol
 from test_scripts import Rear, IDLE, FULL, STEP
+
+
+def new_rear():
+    """Ezek a tesztek a VESC belső IMU-ját szimulálják (get-imu-rpy)."""
+    r = Rear()
+    r.i.set("imu-source", Symbol("vesc"))
+    return r
 
 
 def angle(r, deg, roll=0.0):
@@ -33,7 +41,7 @@ def secs(t):
 
 
 def rear_p2():
-    r = Rear()
+    r = new_rear()
     r.k = 0
     angle(r, 0.0)
     r.boot_p2()
@@ -82,7 +90,7 @@ class ActivationTests(unittest.TestCase):
         self.assertEqual(r.g("bal-state"), "off")
 
     def test_not_in_profile1(self):
-        r = Rear()
+        r = new_rear()
         r.k = 0
         angle(r, 0.0)
         r.boot_p1()
@@ -316,7 +324,7 @@ class ExitTests(unittest.TestCase):
                 tick(r, 1)
                 r.i.call("on-front-ack", 0x4D1, bytearray([0xA5, flags, 0]))
 
-        r = Rear()
+        r = new_rear()
         r.k = 0
         r.v.can_devs = [12]
         angle(r, 0.0)

@@ -88,16 +88,22 @@ crc = (len + addr + cmd + arg + payload bájtok összege) XOR 0xFFFF
 Az ESC → kijelző mód bájt bitjei: 1 = D, 2 = ECO, 4 = S, 8 = töltés,
 16 = kikapcsolva, 32 = zár, 64 = mph, 128 = hőfok ikon.
 
+A lámpa bájt: az M365 kijelző a **6-os bitre** (0x40) kapcsolja a saját
+lámpáját. A gyári vezérlő 0x64-et küld, a Koxx3 firmware 0x40-et (lucidnx
+mérése). Az A-Emile/PierreDisplayDash scriptek 1-et küldenek, ettől csak az
+ikon gyullad ki. A mi scriptünk 100-at (0x64) küld (`dash-light-value`).
+
 ## Amiben a mi rendszerünk eltér
 
 | Téma | Referenciák | Ez a projekt |
 |---|---|---|
 | Gomb | RX láb (1 kΩ felhúzó), `gpio-read`, 3 mintás többségi döntés | ugyanígy az RX lábon, **470 Ω** felhúzóval. 3 mintás lenyomás, 2 mintás felengedés, egy pergés nem bont ketté egy nyomást. A gomb lába paraméter (`button-pin`) |
 | Féklámpa | nincs (lucidnx: PWM) | **PPM láb GPIO**: állandóan ég, fékezéskor 5 Hz-en villog |
-| Első lámpa | csak ikon | **ADC2 láb GPIO** + ikon |
+| Első lámpa | 1-es érték: csak ikon (lucidnx: 0x64, a kijelző lámpája is) | 0x64 a kijelzőnek (a kijelző lámpája + ikon) + külső lámpa az **első vezérlő PPM lábán** (CAN-en kapcsolva) |
+| Kipörgésgátló | VESC ADC app beépített TC-je (lucidnx csak jelzi a csúszást) | saját, csak 2-es profilban, a két vezérlő `l-current-max-scale`-jén keresztül; az ADC app TC-jét kikapcsolja |
 | Profilváltás | gomb-kombináció menet közben | **bekapcsoláskor nyomva tartott gáz** → 2-es profil, utána a gáz elengedéséig nincs kimenet |
 | Berúgás | `app-disable-output` (a fék is kiesik) | a gázt az ADC app start-feszültségére fogja, **a fék végig működik**, és az ADC rámpa is érvényes marad |
-| Dual motor | `rcode-run` (code server csomag) vagy `can-cmd` | saját 8 bájtos CAN SID üzenet 10 Hz-en + visszaigazolás. Az első vezérlő **alapból tiltva van**, és 1 s csend után újra tiltja magát |
+| Dual motor | `rcode-run` (code server csomag) vagy `can-cmd` | saját 8 bájtos CAN SID üzenet 10 Hz-en (2-es profilban 50 Hz) + 8 bájtos visszajelzés (lámpa, verzió, hibakód, sebesség). Az első vezérlő **alapból tiltva van**, és 1 s csend után újra tiltja magát |
 | Álló kijelzés | beállítható idle mód | 2-es profilban akku %, 1-es profilban sebesség |
 
 ## Firmware 7.00 tudnivalók (a forráskódból ellenőrizve)
@@ -112,6 +118,20 @@ Az ESC → kijelző mód bájt bitjei: 1 = D, 2 = ECO, 4 = S, 8 = töltés,
   újra, ha az *App to Use* vagy a *Servo Output* beállítás megváltozik:
   `app_adc_start` analógra állítja az ADC lábakat, `pwm_servo_stop` bemenetre a
   PPM lábat.
+- `conf-set` két úton megy: az áram-, watt- és sebességkorlátok
+  (`l-current-max-scale`, `max-speed`, `l-watt-max` stb.) „instant” írások a
+  futó konfigurációba (kb. 1 ms alatt hatnak, olcsók), ezért a kipörgésgátló
+  50 Hz-en állíthatja őket. Az **app-paraméterek** (pl. `adc-tc`) viszont
+  `app_set_configuration`-t hívnak: ez az ADC app `ms_without_power` számlálóját
+  nullázza, és bekapcsolt Safe Start mellett **menet közben elveszi a gázt**,
+  amíg a gázkar 0,5 s-ig el nem engedett. Ezért az ADC app TC-jét csak
+  induláskor (kimenet nélkül) kapcsoljuk ki. Az `imu_init` is lefut, de az IMU-t
+  csak típus-, frekvencia- vagy szűrőváltáskor indítja újra.
+- I2C a Lispből (`i2c-start`): bitbangelt, órajel-nyújtást (clock stretching)
+  10 ms-ig vár, lábak: `'pin-rx`, `'pin-tx`, SWD, hall, ADC, PPM. Az
+  `i2c-tx-rx` küldés nélkül (`nil`) csak olvas, a fogadott hossz a puffer hossza.
+  A második (BLE / permanent UART) port lábai Lispből nem érhetők el, és a
+  `uart-start` az ESC-n csak a COMM portot kezeli.
 - `app-adc-detach 3 1`: mindkét ADC és a gombok leválasztva. 6.05 óta a
   leválasztott ADC app nem nullázza magától a timeout-ot, ezért az override-ot
   folyamatosan küldeni kell. Ez egyben biztonsági funkció.
