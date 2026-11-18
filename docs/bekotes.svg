@@ -32,7 +32,6 @@
   <text x="340" y="265">3.3V</text>
   <text x="340" y="305" fill="#757575" font-size="12">ADC1: szabad</text>
   <text x="340" y="321" fill="#757575" font-size="12">(10 kΩ → GND)</text>
-  <text x="510" y="125" text-anchor="end">CAN →</text>
 
   <!-- vezetékek kijelző -> COMM -->
   <line x1="200" y1="100" x2="330" y2="100" stroke="#c62828" stroke-width="3"/>
@@ -50,8 +49,10 @@
   <text x="282" y="290" text-anchor="end" font-size="12">470 Ω</text>
   <text x="282" y="305" text-anchor="end" font-size="12">felhúzó</text>
 
-  <!-- első lámpa fokozat -->
-  <line x1="520" y1="120" x2="650" y2="120" stroke="#1565c0" stroke-width="3"/>
+  <!-- első lámpa fokozat: a gate az ELSŐ vezérlő PPM jelére megy (nem a hátsóra!) -->
+  <circle cx="545" cy="120" r="5" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+  <line x1="550" y1="120" x2="650" y2="120" stroke="#1565c0" stroke-width="3"/>
+  <text x="535" y="88" font-size="11" font-weight="bold" fill="#1565c0">← az ELSŐ VESC PPM jele</text>
   <circle cx="600" cy="120" r="4" fill="#212121"/>
   <line x1="600" y1="120" x2="600" y2="138" stroke="#212121" stroke-width="2"/>
   <polyline points="600,138 592,141 608,147 592,153 608,159 600,162" fill="none" stroke="#212121" stroke-width="2"/>
@@ -73,7 +74,7 @@
 
   <!-- PPM port + féklámpa fokozat -->
   <rect x="330" y="380" width="190" height="80" rx="10" fill="#f5f5f5" stroke="#424242" stroke-width="2"/>
-  <text x="425" y="405" text-anchor="middle" font-weight="bold">PPM (servo) port</text>
+  <text x="425" y="405" text-anchor="middle" font-weight="bold">Hátsó PPM (servo) port</text>
   <text x="510" y="430" text-anchor="end">jel</text>
   <text x="340" y="450" fill="#757575" font-size="12">GND közös</text>
   <line x1="520" y1="425" x2="650" y2="425" stroke="#c62828" stroke-width="3"/>
@@ -103,6 +104,16 @@
   <rect x="790" y="495" width="150" height="55" rx="10" fill="#f3e5f5" stroke="#424242" stroke-width="2"/>
   <text x="865" y="518" text-anchor="middle" font-weight="bold">Első VESC</text>
   <text x="865" y="538" text-anchor="middle" font-size="12">elso_vezerlo.lisp</text>
+  <text x="782" y="548" text-anchor="end" font-size="11" font-weight="bold" fill="#1565c0">PPM jel → első lámpa N-FET gate</text>
+
+  <!-- BNO085 az első vezérlő COMM portján (opcionális, a balansz ágak használják) -->
+  <rect x="790" y="390" width="150" height="76" rx="8" fill="#e8f5e9" stroke="#424242" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="865" y="408" text-anchor="middle" font-weight="bold">BNO085 IMU</text>
+  <text x="865" y="424" text-anchor="middle" font-size="11" fill="#616161">opcionális (balansz ágak)</text>
+  <text x="865" y="440" text-anchor="middle" font-size="11">SDA → RX, SCL → TX</text>
+  <text x="865" y="455" text-anchor="middle" font-size="11">VIN → 3.3V, GND → GND</text>
+  <line x1="865" y1="466" x2="865" y2="495" stroke="#2e7d32" stroke-width="3"/>
+  <text x="872" y="486" font-size="11">COMM</text>
 
   <text x="30" y="350" font-size="12" fill="#424242">Gomb (a kijelzőben): lenyomva</text>
   <text x="30" y="366" font-size="12" fill="#424242">GND-re húzza a zöld vezetéket.</text>
