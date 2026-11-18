@@ -98,11 +98,19 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   első scriptnél 60-as hiba, `(lampa-teszt)` mindkét vezérlőn. Kipörgésgátló + BNO085 meghajtó (ld. fent).
   A szimulátor bővült (i16/u32, little-endian, assoc/acons, atan2/asin, I2C + szimulált BNO085 SHTP eszköz,
   EEPROM), az AB ág szimulátora a main alapja lett. 87 teszt átmegy.
+  A bekötési rajz javítva: a lámpa N-FET gate-vezetéke a hátsó VESC „CAN” feliratától indult (félrevezető, lehet,
+  hogy ez is oka a hibának), most egyértelműen az első VESC PPM jelére megy; BNO085 is felkerült.
+  Átvezetve: **Balance** (BNO085 a balansz szöge, balansz alatt nincs TC; 123 teszt) és **Advanced-Balance**
+  (két kipörgésgátló AB módban: az általános 3x gombos + az eredeti laza AB-TC, külön hangolható; fék + 5x gomb álló
+  helyzetben = célszög mentés EEPROM-ba, 5 sípolás + a kijelző mutatja, hiba 61; BNO085 a szög, IMU nélkül 62;
+  161 teszt). Részletek az ágak CLAUDE.md-jében.
 
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
    `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
-   BNO085: meg kell erősíteni, hogy a „COM2” az első vezérlő COMM portja, és I2C-n van-e bekötve.
+   BNO085: meg kell erősíteni, hogy a „COM2” az első vezérlő COMM portja, és I2C-n van-e bekötve
+   (ha a COM2 a hátsó vezérlő második/BLE portja: azt a 7.00-s Lisp nem éri el, át kell kötni az első COMM-ra).
+   AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
    Gomb: működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
 2. Hardveres próba felemelt kerékkel (README „Első próba” lista), visszajelzés a felhasználótól.
 3. A becsült értékek (P1 D, P2 ECO, P1 első fék) megerősítése vagy javítása.
