@@ -9,14 +9,19 @@
 ;    (App Settings -> ADC) hangolhatók.
 ;  - Kijelző gomb a kijelző zöld vezetékén, a COMM port RX lábán (felhúzó
 ;    ellenállás 3.3V-ra, lenyomva a kijelző GND-re húzza):
-;      1x nyomás = első lámpa (ADC2 MOSFET) + lámpa ikon
+;      1x nyomás = lámpa: a kijelző saját lámpája + az első vezérlő PPM lábán
+;                  lévő külső lámpa (MOSFET)
 ;      2x nyomás = módváltás  D -> S -> ECO -> D
+;      3x nyomás = kipörgésgátló be/ki (csak 2-es profilban), 3 sípolás
 ;  - PPM láb: féklámpa MOSFET. Alapból folyamatosan világít, fékezéskor villog.
 ;  - Kijelzőn: sebesség, akku töltöttség, mód (ECO/D/S), hőfok ikon, hibakód.
 ;  - 1-es profil (alapértelmezett, "rendőr mód"): csak a hátsó motor megy,
 ;    3 km/h-s berúgás kell az induláshoz.
 ;  - 2-es profil: bekapcsoláskor nyomva tartott gázkarral. Mindkét motor megy,
 ;    nincs berúgás, álló helyzetben a kijelző az akku %-ot mutatja.
+;    Kipörgésgátló: ha az egyik kerék a megengedettnél gyorsabban forog, mint
+;    a másik, annak a hajtását csökkenti (induláskor bekapcsolva).
+;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (tc-teszt)
 ;
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
@@ -48,6 +53,17 @@
 (def headlight-on-front t)    ; t = a lámpa MOSFET az első vezérlő PPM lábán (CAN-en kapcsolva),
                               ; nil = a hátsó vezérlő ADC2 lábán (sok lapon az ADC bemenet
                               ; védőellenállásai miatt ez nem tud MOSFET-et kapcsolni)
+(def dash-light-value 100)    ; a kijelzőnek küldött lámpa érték bekapcsolt lámpánál.
+                              ; 100 (0x64) = mint a gyári vezérlő: a 6-os bit kapcsolja a
+                              ; kijelző saját lámpáját. 1 = csak az ikon világít.
+
+; Kipörgésgátló (csak 2-es profilban). Az első és a hátsó kerék sebességét
+; hasonlítja össze. Ha az egyik tc-slip-nél többel gyorsabban forog, a hajtását
+; tc-range alatt lineárisan 0-ig csökkenti. 3 gyors gombnyomás: be/ki.
+(def tc-default t)            ; induláskor bekapcsolva
+(def tc-slip 2.0)             ; km/h - engedélyezett sebességkülönbség (eddig nem szól bele)
+(def tc-range 3.0)            ; km/h - e fölött ennyi további különbségnél a hajtás 0
+(def tc-recover 0.3)          ; s - a csúszás után ennyi idő alatt jön vissza a teljes hajtás
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -81,8 +97,11 @@
 (def front-cmd-sid 0x4D0)      ; CAN SID: hátsó -> első parancs
 (def front-ack-sid 0x4D1)      ; CAN SID: első -> hátsó visszajelzés
 (def front-error-code 50)      ; ezt mutatja a kijelző, ha az első vezérlő nem válaszol
+(def front-min-version 2)      ; az első script legalább ilyen verziójú legyen
+(def front-old-error-code 60)  ; ezt mutatja a kijelző, ha az első script régi (nincs lámpa, TC)
 
 (def beep-on-start t)          ; induláskor sípol: 1x = 1-es profil, 2x = 2-es profil
+(def beep-spacing 0.15)        ; s - a sípolások között legalább ennyi szünet (külön hallatszanak)
 
 ; -> Belső állapot (ne módosítsd) -----------------------------------------------
 
@@ -124,6 +143,19 @@
 (def t-front 0)
 (def t-slow 0)
 (def t-err 0)
+(def last-beep 0)
+(def front-version 0)          ; az első script verziója (a visszajelzésből), 0 = még nincs
+(def front-old nil)            ; t = az első script régebbi, mint front-min-version
+(def front-lamp nil)           ; az első vezérlő szerint a lámpa parancs
+(def front-pin -1)             ; a lámpa láb visszaolvasott szintje az első vezérlőn
+(def front-fault 0)            ; az első vezérlő VESC hibakódja
+(def front-speed 0.0)          ; km/h, előjeles, az első vezérlő saját kerékadataival
+(def front-speed-time 0)
+(def tc-on tc-default)         ; kipörgésgátló be/ki (3x gomb)
+(def tc-front 1.0)             ; kipörgésgátló szorzók (1 = nincs beavatkozás)
+(def tc-rear 1.0)
+(def tc-time 0)
+(def rear-scale -1.0)          ; a hátsón utoljára beállított áram-szorzó
 
 @const-start
 
@@ -138,6 +170,8 @@
 
 (defun speed-kmh () (abs (* (get-speed) 3.6)))
 
+(defun min2 (a b) (if (< a b) a b))
+
 (defun mode-limits (prof mode)
     (if (= prof 2)
         (cond ((= mode 2) p2-eco) ((= mode 4) p2-sport) (t p2-drive))
@@ -150,32 +184,59 @@
 
 ; -> Módok és az első vezérlő
 
+; A hátsó áram-szorzó: a mód szorzója x a kipörgésgátló szorzója. Ez a VESC
+; "instant" konfigurációs útja (nem indítja újra az ADC app-ot), és csak
+; változáskor írjuk.
+(defun apply-scale () {
+        (var s (/ (round (* 100.0 (ix (mode-limits profile speedmode) 2) tc-rear)) 100.0))
+        (if (not (= s rear-scale)) {
+                (conf-set 'l-current-max-scale s)
+                (setq rear-scale s)
+        })
+})
+
 (defun apply-mode () {
         (var lim (mode-limits profile speedmode))
         (conf-set 'max-speed (/ (ix lim 0) 3.6))
         (conf-set 'l-watt-max (ix lim 1))
-        (conf-set 'l-current-max-scale (ix lim 2))
+        (setq rear-scale -1.0) ; mindenképp újraírjuk
+        (apply-scale)
         (send-front)
 })
 
 ; 8 bájt: A5, flags, áram %, km/h*10 (u16), watt/100 (u16), profil
 ; flags: bit0 = hajtás, bit1 = fék, bit2 = első lámpa
+; Az áram % a mód szorzója x a kipörgésgátló első szorzója.
 (defun send-front ()
     (if front-enabled {
             (var lim (mode-limits profile speedmode))
             (bufset-u8 can-tx 0 0xA5)
             (bufset-u8 can-tx 1 (+ (front-flags) (if (and headlight-on-front light) 4 0)))
-            (bufset-u8 can-tx 2 (to-i (round (* 100.0 (ix lim 2)))))
+            (bufset-u8 can-tx 2 (to-i (round (* 100.0 (ix lim 2) tc-front))))
             (bufset-u16 can-tx 3 (to-i (round (* 10.0 (ix lim 0)))))
             (bufset-u16 can-tx 5 (to-i (round (/ (ix lim 1) 100.0))))
             (bufset-u8 can-tx 7 profile)
             (can-send-sid front-cmd-sid can-tx)
 }))
 
+; Visszajelzés: A5, flags, áram %, VESC hibakód, állapot (bit0 = lámpa,
+; bit2 = a lámpa láb szintje), verzió, sebesség (0,1 km/h, i16). A régi
+; (1-es verziójú) első script csak 3-4 bájtot küld.
 (defun on-front-ack (id data)
-    (if (and (= id front-ack-sid) (>= (buflen data) 2) (= (bufget-u8 data 0) 0xA5)) {
+    (if (and (= id front-ack-sid) (>= (buflen data) 3) (= (bufget-u8 data 0) 0xA5)) {
             (setq front-ack-time (systime))
             (setq front-ack-flags (bufget-u8 data 1))
+            (if (>= (buflen data) 8)
+                {
+                    (var st (bufget-u8 data 4))
+                    (setq front-fault (bufget-u8 data 3))
+                    (setq front-lamp (= (bitwise-and st 1) 1))
+                    (setq front-pin (if (= (bitwise-and st 4) 4) 1 0))
+                    (setq front-version (bufget-u8 data 5))
+                    (setq front-speed (/ (bufget-i16 data 6) 10.0))
+                    (setq front-speed-time (systime))
+                }
+                (setq front-version 1))
 }))
 
 (defun can-event-loop ()
@@ -185,14 +246,79 @@
             (_ nil)
 )))
 
-(defun update-front-warn ()
-    (setq front-warn
-        (and front-enabled
-            (> (secs-since boot-time) 4.0)
-            (> (length (can-list-devs)) 0)
-            (or (> (secs-since front-ack-time) 1.0)
-                (not (= front-ack-flags (front-flags))))))
+(defun update-front-warn () {
+        (var on (and front-enabled
+                (> (secs-since boot-time) 4.0)
+                (> (length (can-list-devs)) 0)))
+        (setq front-warn
+            (and on
+                (or (> (secs-since front-ack-time) 1.0)
+                    (not (= front-ack-flags (front-flags))))))
+        ; válaszol, de régi scripttel: a lámpa és a kipörgésgátló nem megy
+        (setq front-old (and on (not front-warn) (< front-version front-min-version)))
+})
+
+; -> Kipörgésgátló (csak 2-es profilban)
+; A hátsó kerék sebessége helyben, az elsőé a visszajelzésből jön (az első
+; vezérlő saját kerékadataival számolva, 50 Hz-en). A csökkentés a VESC
+; áram-szorzóján át hat az ADC app kimenetére: a VESC Tool beállításai
+; (görbe, rámpa) maradnak. Csökkenés azonnal, visszaállás tc-recover alatt.
+
+(defun tc-factor (excess) ; a gyorsabb kerék hajtásának szorzója (0-1)
+    (clamp (- 1.0 (/ (- excess tc-slip) tc-range)) 0.0 1.0)
 )
+
+(defun tc-active ()
+    (and tc-on (= profile 2) (eq state 'run) front-enabled
+        (< (secs-since front-speed-time) 0.2))
+)
+
+(defun tc-follow (cur k dt)
+    (if (< k cur) k (min2 k (+ cur (if (> tc-recover 0.01) (/ dt tc-recover) 1.0))))
+)
+
+(defun tc-step () {
+        (var dt (clamp (secs-since tc-time) 0.0 0.1))
+        (setq tc-time (systime))
+        (var kf 1.0)
+        (var kr 1.0)
+        (if (tc-active) {
+                (var rear (* (get-speed) 3.6))
+                (var d (- front-speed rear))          ; + = az első forog gyorsabban
+                (if (< rear 0.0) (setq d (- 0.0 d)))  ; hátrafelé gurulva fordítva
+                (setq kf (tc-factor d))
+                (setq kr (tc-factor (- 0.0 d)))
+        })
+        (setq tc-front (tc-follow tc-front kf dt))
+        (setq tc-rear (tc-follow tc-rear kr dt))
+        (apply-scale)
+})
+
+(defun tc-toggle () ; 3 gyors gombnyomás
+    (if (= profile 2)
+        {
+            (setq tc-on (not tc-on))
+            (setq beep-count 3)
+            (button-log-msg (if tc-on "3x -> kiporgesgatlo BE" "3x -> kiporgesgatlo KI"))
+        }
+        (button-log-msg "3x -> a kiporgesgatlo csak 2-es profilban van"))
+)
+
+; REPL-ből hívható: (tc-teszt) - 10 s-ig írja a két kerék sebességét és a
+; kipörgésgátló szorzóit (hangoláshoz: tc-slip, tc-range, tc-recover)
+(defun tc-teszt () {
+        (print (str-merge "Kiporgesgatlo: " (if tc-on "BE" "KI")
+                (if (tc-active) " (aktiv)" " (most nem aktiv: csak 2-es profilban, futas kozben)")
+                ", slip " (str-from-n tc-slip "%.1f") " km/h, tartomany "
+                (str-from-n tc-range "%.1f") " km/h"))
+        (looprange i 0 50 {
+                (print (str-merge "elso " (str-from-n front-speed "%.1f")
+                        "  hatso " (str-from-n (* (get-speed) 3.6) "%.1f")
+                        " km/h  ->  elso x" (str-from-n tc-front "%.2f")
+                        "  hatso x" (str-from-n tc-rear "%.2f")))
+                (sleep 0.2)
+        })
+})
 
 (defun update-temp-warn () {
         (var fet (get-temp-fet))
@@ -253,17 +379,24 @@
         (var shown (if (and (= profile 2) (< spd p2-idle-speed)) batt (to-i (+ spd 0.5))))
         (var fault (get-fault))
         (var beep 0)
-        (if (> beep-count 0) {
+        ; minden sípolás egy keret, köztük legalább beep-spacing szünettel
+        (if (and (> beep-count 0) (> (secs-since last-beep) beep-spacing)) {
                 (setq beep 1)
                 (setq beep-count (- beep-count 1))
+                (setq last-beep (systime))
         })
         ; mód bájt: 1 = D, 2 = ECO, 4 = S, +128 = hőfok ikon
         (bufset-u8 tx-frame 6 (+ speedmode (if temp-warn 128 0)))
         (bufset-u8 tx-frame 7 batt)
-        (bufset-u8 tx-frame 8 (if light 1 0))
+        (bufset-u8 tx-frame 8 (if light dash-light-value 0)) ; a kijelző lámpája + ikon
         (bufset-u8 tx-frame 9 beep)
         (bufset-u8 tx-frame 10 (clamp shown 0 255))
-        (bufset-u8 tx-frame 11 (if (> fault 0) fault (if front-warn front-error-code 0)))
+        (bufset-u8 tx-frame 11
+            (cond
+                ((> fault 0) fault)
+                (front-warn front-error-code)
+                (front-old front-old-error-code)
+                (t 0)))
         (var sum 0)
         (looprange i 2 12 (setq sum (+ sum (bufget-u8 tx-frame i))))
         (var crc (bitwise-xor sum 0xFFFF))
@@ -328,20 +461,22 @@
 )
 
 (defun button-action (clicks)
-    (if (= clicks 1)
-        {
-            (setq light (not light))
-            (send-front) ; az első vezérlő azonnal kapcsolja a lámpát
-            (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
-        }
-        { ; 2 vagy több nyomás: D -> S -> ECO -> D
-            (setq speedmode (cond ((= speedmode 1) 4) ((= speedmode 4) 2) (t 1)))
-            (apply-mode)
-            (setq beep-count 1)
-            (button-log-msg (str-merge (str-from-n clicks "%d") "x -> mod "
-                    (cond ((= speedmode 2) "ECO") ((= speedmode 4) "S") (t "D"))))
-        }
-))
+    (cond
+        ((= clicks 1) {
+                (setq light (not light))
+                (send-front) ; az első vezérlő azonnal kapcsolja a lámpát
+                (button-log-msg (if light "1x -> lampa BE" "1x -> lampa KI"))
+        })
+        ((= clicks 2) { ; D -> S -> ECO -> D
+                (setq speedmode (cond ((= speedmode 1) 4) ((= speedmode 4) 2) (t 1)))
+                (apply-mode)
+                (setq beep-count 1)
+                (button-log-msg (str-merge "2x -> mod "
+                        (cond ((= speedmode 2) "ECO") ((= speedmode 4) "S") (t "D"))))
+        })
+        ((= clicks 3) (tc-toggle))
+        (t (button-log-msg (str-merge (str-from-n clicks "%d") "x -> nincs funkcio"))))
+)
 
 (defun button-step () {
         (var raw (= (gpio-read button-pin) 0)) ; lenyomva = 0
@@ -477,8 +612,11 @@
 
         (button-step)
         (lights-step)
+        (tc-step)
 
-        (if (> (secs-since t-front) 0.1) {
+        ; 2-es profilban 50 Hz (a kipörgésgátlónak friss első sebesség és
+        ; gyors első szorzó kell), egyébként 10 Hz
+        (if (or (= profile 2) (> (secs-since t-front) 0.1)) {
                 (setq t-front (systime))
                 (send-front)
         })
@@ -515,10 +653,35 @@
             (list 'km/h (speed-kmh) 'berugva kick-engaged 'gaz-fogva thr-gate)
             (list 'gaz-nyers thr-raw 'fek-nyers brk-raw 'keretek lever-frames)
             (list 'gaz (get-adc-decoded 0) 'fek (get-adc-decoded 1))
-            (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses
-                'lampa light)
-            (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn)
+            (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses)
+            (list 'lampa light 'elso-lampa front-lamp 'elso-lab front-pin)
+            (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn
+                'elso-verzio front-version 'elso-regi front-old 'elso-vesc-hiba front-fault)
+            (list 'tc tc-on 'tc-aktiv (tc-active) 'tc-elso tc-front 'tc-hatso tc-rear
+                'elso-km/h front-speed)
 )))
+
+; REPL-ből hívható: (lampa-teszt) - háromszor be- és kikapcsolja a lámpát, és
+; kiírja, mit jelez vissza az első vezérlő. Ha a "parancs" követi, de a lámpa
+; nem világít: bekötés/MOSFET (az első vezérlőn: (lampa-teszt)).
+; A parancsot a vezérlőszál küldi ki (legfeljebb 0,1 s), itt csak a lámpát állítjuk.
+(defun lampa-teszt () {
+        (var orig light)
+        (print (str-merge "Elso script verzio: " (str-from-n front-version "%d")
+                (if (< front-version front-min-version)
+                    " -> REGI vagy nem valaszol: toltsd fel az uj elso_vezerlo.lisp-et az elso vezerlore!"
+                    " (rendben)")))
+        (looprange i 0 6 {
+                (setq light (not light))
+                (sleep 0.5)
+                (print (str-merge "lampa " (if light "BE" "KI")
+                        " -> elso vezerlo: parancs " (if front-lamp "BE" "KI")
+                        ", lab " (str-from-n front-pin "%d")
+                        ", utolso valasz " (str-from-n (secs-since front-ack-time) "%.2f") " s"))
+                (sleep 1.0)
+        })
+        (setq light orig)
+})
 
 (defun init () {
         (setq boot-time (systime))
@@ -545,6 +708,15 @@
         (bufset-u8 tx-frame 4 0x64) ; cmd
         (bufset-u8 tx-frame 5 0x00) ; arg
 
+        ; A VESC ADC app saját kipörgésgátlóját kikapcsoljuk (csak a RAM-ban), a
+        ; script kipörgésgátlója helyettesíti; különben a 3x gombos kikapcsolás
+        ; nem kapcsolná ki teljesen. Most még nincs kimenet, a beállítás biztonságos.
+        (if (= (conf-get 'adc-tc) 1) {
+                (conf-set 'adc-tc 0)
+                (print "ADC app Traction Control kikapcsolva, a script kiporgesgatloja mukodik helyette")
+        })
+
+        (setq tc-time (systime))
         (refresh-gate)
         (apply-mode) ; induláskor az 1-es profil korlátai élnek
 
