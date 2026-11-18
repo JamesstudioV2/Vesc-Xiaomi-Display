@@ -11,6 +11,14 @@ import math
 import unittest
 
 from test_scripts import Rear, IDLE, FULL, STEP
+from lbm_sim import Symbol
+
+
+def new_rear():
+    """Ezek a tesztek a VESC belső IMU-ját szimulálják (get-imu-rpy)."""
+    r = Rear()
+    r.i.set("imu-source", Symbol("vesc"))
+    return r
 
 HALF = 0x6A  # ~1.37 V -> ~48 % gáz
 
@@ -35,7 +43,7 @@ def secs(t):
 
 
 def rear_p2():
-    r = Rear()
+    r = new_rear()
     r.k = 0
     angle(r, 0.0)
     r.boot_p2()
@@ -85,6 +93,7 @@ class ToggleTests(unittest.TestCase):
         double_press(r)
         self.assertTrue(r.g("ab-on"))
         self.assertTrue(r.v.output_disabled, "the script drives both motors")
+        tick(r, secs(0.5))  # a sípolások között beep-spacing szünet van
         self.assertGreaterEqual(sum(f[9] for f in r.v.tx[n:]), 2, "two beeps")
         f = r.last_dash()
         self.assertEqual(f[6] & 32, 32, "lock icon (LOCK bit)")
@@ -110,7 +119,7 @@ class ToggleTests(unittest.TestCase):
         self.assertEqual(f[11], 0)
 
     def test_refused_in_profile1(self):
-        r = Rear()
+        r = new_rear()
         r.k = 0
         angle(r, 0.0)
         r.boot_p1()
@@ -118,6 +127,7 @@ class ToggleTests(unittest.TestCase):
         n = len(r.v.tx)
         double_press(r)
         self.assertEqual(r.g("ab-on"), None)
+        tick(r, secs(0.6))
         self.assertGreaterEqual(sum(f[9] for f in r.v.tx[n:]), 3)
 
     def test_refused_without_imu(self):

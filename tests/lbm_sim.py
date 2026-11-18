@@ -135,6 +135,7 @@ class Vesc:
             "l-current-max-scale": 1.0, "l-current-min-scale": 1.0,
             "l-current-max": 60.0, "l-current-min": -60.0,
             "adc-ramp-time-pos": 0.3, "adc-ramp-time-neg": 0.1, "adc-thr-hyst": 0.0,
+            "adc-tc": 0, "adc-tc-max-diff": 3000.0,
         }
         self.conf_log = []
         self.gpio_mode = {"pin-rx": "uart-af", "pin-tx": "uart-af"}
@@ -162,6 +163,10 @@ class Vesc:
         self.motor_log = []
         self.sleep_budget = None   # number of sleeps before Blocked is raised
         self.fail_temp = False     # get-temp-fet raises an error
+        self.i2c = None            # (rate, sda, scl) after i2c-start
+        self.i2c_dev = None        # simulated I2C device (e.g. Bno085)
+        self.eeprom = {}           # addr -> float (eeprom-store-f)
+        self.eeprom_writes = 0
 
     def out(self, pin):
         """Level actually driven on the pin: only an output drives its ODR value."""
@@ -414,19 +419,89 @@ class Interp:
             buf[i] = need_int(x, 0, 255, "bufset-u8")
             return True
 
-        def bufset_u16(buf, i, x):
-            need_idx(buf, i, 2, "bufset-u16")
-            x = need_int(x, 0, 65535, "bufset-u16")
-            buf[i], buf[i + 1] = x >> 8, x & 0xFF
+        def order(opt, what):  # optional 'little-endian / 'big-endian
+            if not opt or opt[0] == "big-endian":
+                return "big"
+            if opt[0] == "little-endian" and len(opt) == 1:
+                return "little"
+            raise LispError("%s: bad endianness argument %r" % (what, opt))
+
+        def bufset_int(n, lo, hi, signed, what):
+            def f(buf, i, x, *opt):
+                need_idx(buf, i, n, what)
+                x = need_int(x, lo, hi, what)
+                buf[i:i + n] = x.to_bytes(n, order(opt, what), signed=signed)
+                return True
+            return f
+
+        def bufget_int(n, signed, what):
+            def f(buf, i, *opt):
+                need_idx(buf, i, n, what)
+                return int.from_bytes(bytes(buf[i:i + n]), order(opt, what), signed=signed)
+            return f
+
+        bufset_u16 = bufset_int(2, 0, 65535, False, "bufset-u16")
+
+        def bufclear(buf, byte=0):
+            if not isinstance(buf, bytearray):
+                raise LispError("bufclear: not a buffer")
+            buf[:] = bytes([need_int(byte, 0, 255, "bufclear")]) * len(buf)
             return True
+
+        def assoc(alist, key):
+            for k, val in alist or []:
+                if k == key:
+                    return val
+            return None
+
+        def i2c_start(rate="rate-200k", sda="pin-rx", scl="pin-tx"):
+            v.i2c = (rate, sda, scl)
+            v.gpio_mode[sda] = "i2c"
+            v.gpio_mode[scl] = "i2c"
+            return True
+
+        def i2c_dev_at(addr):
+            d = v.i2c_dev
+            return d if d is not None and d.present and d.addr == addr else None
+
+        def i2c_detect_addr(addr):
+            if v.i2c is None:
+                raise LispError("i2c-detect-addr: i2c not started")
+            return lbool(i2c_dev_at(addr))
+
+        def i2c_tx_rx(addr, tx, rx=None):
+            if v.i2c is None:
+                raise LispError("i2c-tx-rx: i2c not started")
+            d = i2c_dev_at(addr)
+            if d is None:
+                return 0
+            if isinstance(tx, bytearray):
+                data = bytes(tx)
+            else:
+                data = bytes(need_int(b, 0, 255, "i2c-tx-rx") for b in (tx or []))
+            if data:
+                d.write(data)
+            if rx is not None:
+                if not isinstance(rx, bytearray):
+                    raise LispError("i2c-tx-rx: rx is not a buffer")
+                rx[:] = d.read(len(rx))
+            return 1
+
+        def eeprom_store_f(addr, x):
+            need_int(addr, 0, 127, "eeprom-store-f")
+            v.eeprom[addr] = float(num(x))
+            v.eeprom_writes += 1
+            return True
+
+        def eeprom_read_f(addr):
+            need_int(addr, 0, 127, "eeprom-read-f")
+            return v.eeprom.get(addr)
 
         def bufget_u8(buf, i):
             need_idx(buf, i, 1, "bufget-u8")
             return buf[i]
 
-        def bufget_u16(buf, i):
-            need_idx(buf, i, 2, "bufget-u16")
-            return (buf[i] << 8) | buf[i + 1]
+        bufget_u16 = bufget_int(2, False, "bufget-u16")
 
         def str_from_n(n, fmt):
             if "%d" in fmt:
@@ -574,6 +649,19 @@ class Interp:
             "buflen": lambda b: len(b),
             "bufset-u8": bufset_u8, "bufset-u16": bufset_u16,
             "bufget-u8": bufget_u8, "bufget-u16": bufget_u16,
+            "bufset-i16": bufset_int(2, -32768, 32767, True, "bufset-i16"),
+            "bufget-i16": bufget_int(2, True, "bufget-i16"),
+            "bufset-u32": bufset_int(4, 0, 0xFFFFFFFF, False, "bufset-u32"),
+            "bufget-u32": bufget_int(4, False, "bufget-u32"),
+            "bufclear": bufclear,
+            "assoc": assoc,
+            "acons": lambda k, x, alist: [(k, x)] + list(alist or []),
+            "atan2": lambda y, x: math.atan2(num(y), num(x)),
+            "asin": lambda x: math.asin(num(x)),
+            "sqrt": lambda x: math.sqrt(num(x)),
+            "i2c-start": i2c_start, "i2c-tx-rx": i2c_tx_rx,
+            "i2c-detect-addr": i2c_detect_addr, "i2c-restore": lambda: True,
+            "eeprom-store-f": eeprom_store_f, "eeprom-read-f": eeprom_read_f,
             "str-merge": lambda *a: LString("".join(a)),
             "str-from-n": str_from_n,
             "print": show,
@@ -625,3 +713,103 @@ def check_xiaomi_crc(frame):
     body = frame[2:-2]
     crc = (sum(body) ^ 0xFFFF) & 0xFFFF
     return frame[-2] == crc & 0xFF and frame[-1] == crc >> 8
+
+
+class Bno085:
+    """BNO085 on I2C as the SH-2/SHTP host side sees it.
+
+    Every read transaction starts with a 4 byte SHTP header. A read that is
+    shorter than the packet delivers only part of the cargo; the next read
+    starts with a continuation header (bit 15 set, remaining length) and goes
+    on with the cargo. A header-only read delivers no cargo, so the next read
+    starts the packet again (this is what the SparkFun and Adafruit drivers
+    rely on). Reading past the end of a packet returns zeros.
+    """
+
+    def __init__(self, addr=0x4A):
+        self.addr = addr
+        self.present = True
+        self.seq = [0] * 6
+        self.queue = []
+        self.cur = None          # packet being read: bytes incl. header
+        self.sent = 0            # cargo bytes of cur already delivered
+        self.writes = []
+        self.resets = 0
+        self.feature = None      # (report id, interval us) after Set Feature
+        self.boot()
+
+    def packet(self, ch, cargo):
+        n = len(cargo) + 4
+        hdr = bytes([n & 0xFF, n >> 8, ch, self.seq[ch]])
+        self.seq[ch] = (self.seq[ch] + 1) & 0xFF
+        return hdr + bytes(cargo)
+
+    def boot(self):
+        self.cur, self.sent = None, 0
+        self.queue = [
+            self.packet(0, [0x00] + [0x55] * 271),          # SHTP advertisement (long)
+            self.packet(1, [0x01]),                         # reset complete
+            self.packet(2, [0xF1, 0x84] + [0] * 14),        # unsolicited initialize response
+        ]
+
+    def write(self, data):
+        self.writes.append(data)
+        n = data[0] | (data[1] << 8)
+        assert n == len(data), "SHTP length must match the bytes written"
+        ch, cargo = data[2], data[4:n]
+        if ch == 1 and cargo[:1] == b"\x01":
+            self.resets += 1
+            self.feature = None
+            self.boot()
+        elif ch == 2 and cargo[:1] == b"\xFD":
+            self.feature = (cargo[1], int.from_bytes(cargo[5:9], "little"))
+            self.queue.append(self.packet(2, [0xFC, cargo[1]] + [0] * 15))
+
+    def report(self, x, y, z, w, rid=0x08):
+        """Queue an input report packet with a (unit) quaternion."""
+        def q14(f):
+            return int(round(f * 16384)).to_bytes(2, "little", signed=True)
+        body = bytes([rid, 0, 3, 0]) + q14(x) + q14(y) + q14(z) + q14(w)
+        if rid == 0x05:
+            body += (0).to_bytes(2, "little")
+        self.queue.append(self.packet(3, [0xFB, 0, 0, 0, 0] + list(body)))
+
+    def read(self, n):
+        if self.cur is None:
+            if not self.queue:
+                return bytes(n)                      # header length 0: nothing to read
+            self.cur, self.sent = self.queue.pop(0), 0
+        cargo = self.cur[4:]
+        if self.sent == 0:
+            hdr = self.cur[:4]
+        else:
+            rem = len(cargo) - self.sent + 4
+            hdr = bytes([rem & 0xFF, (rem >> 8) | 0x80, self.cur[2], self.cur[3]])
+        take = max(0, min(n - 4, len(cargo) - self.sent))
+        out = (hdr + cargo[self.sent:self.sent + take])[:n]
+        self.sent += take
+        if self.sent >= len(cargo) and n > 4:
+            self.cur, self.sent = None, 0
+        return out + bytes(n - len(out))
+
+
+def rvc_frame(index, yaw, pitch, roll, acc=(0, 0, 1000)):
+    """BNO08x UART-RVC frame: AA AA, index, yaw, pitch, roll (0.01 deg),
+    acc x, y, z (mg), 3 reserved bytes, checksum of index..reserved."""
+    body = bytes([index & 0xFF])
+    for val in (yaw, pitch, roll):
+        body += int(round(val * 100)).to_bytes(2, "little", signed=True)
+    for val in acc:
+        body += int(val).to_bytes(2, "little", signed=True)
+    body += bytes(3)
+    return [0xAA, 0xAA] + list(body) + [sum(body) & 0xFF]
+
+
+def quat_from_euler(roll, pitch, yaw):
+    """Degrees -> (x, y, z, w), ZYX order (inverse of the script's formula)."""
+    r, p, y = (math.radians(a) / 2 for a in (roll, pitch, yaw))
+    cr, sr, cp, sp, cy, sy = math.cos(r), math.sin(r), math.cos(p), math.sin(p), math.cos(y), math.sin(y)
+    return (sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy)

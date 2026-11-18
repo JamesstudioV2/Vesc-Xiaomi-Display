@@ -5,7 +5,7 @@ Run:  python3 -m unittest discover -s tests -v
 import unittest
 
 from test_scripts import Rear, IDLE, FULL, STEP
-from test_advanced_balance import rear_p2, ab_on, tick, angle, secs, double_press
+from test_advanced_balance import rear_p2, ab_on, tick, angle, secs, double_press, new_rear
 
 LOW = 5      # szakadás: a jel a tartomány alatt
 HIGH = 250   # zárlat a tápra: a tartomány fölött
@@ -80,13 +80,13 @@ class LeverFaultTests(unittest.TestCase):
         self.assertAlmostEqual(r.v.override[0], FULL / 77.27, places=4)
 
     def test_dash_boot_values_are_not_a_fault(self):
-        r = Rear()
+        r = new_rear()
         r.thr = r.brk = 0x0A
         r.step(int(2.0 / STEP))
         self.assertEqual(code(r), 0)
 
     def test_shorted_throttle_at_boot_is_not_profile2(self):
-        r = Rear()
+        r = new_rear()
         r.thr = HIGH
         r.step(int(4.0 / STEP))
         self.assertEqual(r.g("profile"), 1, "a broken throttle must not select profile 2")
@@ -102,19 +102,19 @@ class LeverFaultTests(unittest.TestCase):
 
 class VescFaultTests(unittest.TestCase):
     def test_mapping_table(self):
-        r = Rear()
+        r = new_rear()
         for f, c in EXPECTED.items():
             self.assertEqual(r.i.call("vesc-fault-code", f), c, "VESC %d" % f)
 
     def test_every_display_code_has_a_text(self):
-        r = Rear()
+        r = new_rear()
         for c in set(EXPECTED.values()) | {10, 14, 15, 16, 50, 57, 58, 59}:
             text = r.i.call("error-text", c)
             if c != 69:
                 self.assertNotEqual(text, "egyeb VESC hiba", c)
 
     def test_transient_fault_is_held_3s(self):
-        r = Rear()
+        r = new_rear()
         r.boot_p1()
         r.v.fault = 4
         r.step(3)
@@ -135,7 +135,7 @@ class VescFaultTests(unittest.TestCase):
         self.assertEqual(code(r), 14)
 
     def test_logged_once_with_vesc_number(self):
-        r = Rear()
+        r = new_rear()
         r.boot_p1()
         r.v.fault = 14
         r.step(int(1.0 / STEP))
@@ -144,7 +144,7 @@ class VescFaultTests(unittest.TestCase):
         self.assertIn("VESC hibakod 14", lines[0])
 
     def test_no_false_error_at_boot(self):
-        r = Rear()
+        r = new_rear()
         r.boot_p1()
         self.assertEqual(code(r), 0)
 
