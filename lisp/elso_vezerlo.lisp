@@ -51,6 +51,7 @@
 
 (def bno-state 'detect)      ; 'detect -> 'boot -> 'run
 (def bno-state-time 0)
+(def bno-first t)            ; az első keresés azonnal, utána 1 s-onként
 (def bno-addr -1)            ; a megtalált I2C cím, -1 = nincs
 (def bno-i2c-on nil)
 (def bno-seq-exec 0)         ; SHTP sorszámok csatornánként
@@ -286,7 +287,8 @@
 (defun bno-step () ; I2C mód, a BNO szálból
     (cond
         ((eq bno-state 'detect)
-            (if (> (secs-since bno-state-time) 1.0) {
+            (if (or bno-first (> (secs-since bno-state-time) 1.0)) {
+                    (setq bno-first nil)
                     (if (not bno-i2c-on) {
                             (i2c-start bno-i2c-rate bno-sda bno-scl)
                             (setq bno-i2c-on t)
@@ -392,7 +394,6 @@
                 }
                 {
                     (bno-set-state 'detect)
-                    (setq bno-state-time 0) ; az első keresés azonnal
                     (spawn 150 bno-thread)
                 }))
 })
