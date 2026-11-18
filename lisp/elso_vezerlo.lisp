@@ -32,13 +32,15 @@
 
 ; BNO085 a COMM porton (a main ágon nem kell, a balansz ágakon t)
 ;  I2C (alap, PS0 = PS1 = 0):  SDA -> RX, SCL -> TX, VIN -> 3.3V, GND -> GND
-;                              cím 0x4A vagy 0x4B (automatikusan megtalálja)
+;                              a címet (0x4A / 0x4B) és a felcserélt SDA/SCL
+;                              bekötést automatikusan kezeli
 ;  UART-RVC (PS0 = 1, PS1 = 0): a BNO085 SDA (TX) lába -> RX, 115200 baud
 (def bno-enabled t)          ; t = a BNO085 olvasása (a balansz mód ezt használja)
 (def bno-mode 'i2c)          ; 'i2c (SHTP) vagy 'rvc (UART-RVC)
 (def bno-sda 'pin-rx)        ; I2C SDA láb
 (def bno-scl 'pin-tx)        ; I2C SCL láb
-(def bno-i2c-rate 'rate-400k)
+(def bno-i2c-rate 'rate-100k) ; 100 kHz: hosszabb vezetékkel, gyenge felhúzóval is biztos
+                             ; ('rate-400k gyorsabb, rövid vezetéknél, jó felhúzóval)
 (def bno-interval-ms 10)     ; ms - mintavétel I2C módban (10 = 100 Hz; RVC mindig 100 Hz)
 
 (def last-rx 0)
@@ -53,7 +55,7 @@
 (def bno-state-time 0)
 (def bno-first t)            ; az első keresés azonnal, utána 1 s-onként
 (def bno-addr -1)            ; a megtalált I2C cím, -1 = nincs
-(def bno-i2c-on nil)
+(def bno-swap nil)           ; t = SDA és SCL felcserélve (a keresés váltogatja)
 (def bno-seq-exec 0)         ; SHTP sorszámok csatornánként
 (def bno-seq-ctrl 0)
 (def bno-bufs nil)           ; olvasópufferek méret szerint: ((méret . puffer) ...)
@@ -289,10 +291,12 @@
         ((eq bno-state 'detect)
             (if (or bno-first (> (secs-since bno-state-time) 1.0)) {
                     (setq bno-first nil)
-                    (if (not bno-i2c-on) {
-                            (i2c-start bno-i2c-rate bno-sda bno-scl)
-                            (setq bno-i2c-on t)
-                    })
+                    ; Minden próbánál újraindítjuk az I2C-t, és ha nem találtuk meg,
+                    ; a következő próba a két lábat felcserélve keres: így a
+                    ; felcserélt SDA/SCL bekötés is működik. A bevált sorrend marad.
+                    (if bno-swap
+                        (i2c-start bno-i2c-rate bno-scl bno-sda)
+                        (i2c-start bno-i2c-rate bno-sda bno-scl))
                     (setq bno-addr
                         (cond
                             ((i2c-detect-addr 0x4A) 0x4A)
@@ -300,10 +304,15 @@
                             (t -1)))
                     (if (>= bno-addr 0)
                         {
+                            (print (str-merge "BNO085 megtalalva, cim " (str-from-n bno-addr "0x%02X")
+                                    (if bno-swap " (SDA es SCL felcserelve van bekotve)" "")))
                             (bno-reset)
                             (bno-set-state 'boot)
                         }
-                        (bno-set-state 'detect)) ; 1 s múlva újra
+                        {
+                            (setq bno-swap (not bno-swap))
+                            (bno-set-state 'detect) ; 1 s múlva újra
+                        })
             }))
         ((eq bno-state 'boot) ; újraindulás után: hirdetés és üzenetek kiolvasása, majd a jelentés kérése
             (if (> (secs-since bno-state-time) 0.3) {
@@ -367,8 +376,15 @@
 ; REPL-ből hívható: (bno) - BNO085 állapot és szögek
 (defun bno () {
         (print (list 'bno-enabled bno-enabled 'mod bno-mode 'allapot bno-state
-                'cim bno-addr 'mintak bno-count 'ujrainditas bno-restarts
+                'cim bno-addr 'felcserelve bno-swap 'mintak bno-count 'ujrainditas bno-restarts
                 'friss (bno-fresh)))
+        (print (cond
+                ((not bno-enabled) "A BNO085 olvasasa ki van kapcsolva: (def bno-enabled t)")
+                ((eq bno-mode 'rvc) "UART-RVC mod: a mintak szamanak nonie kell")
+                ((eq bno-state 'detect) "Nem talalhato: tap (3.3V), GND, SDA/SCL az RX/TX-en, PS0/PS1 = 0 (I2C mod)?")
+                ((eq bno-state 'boot) "Megtalalva, indul...")
+                ((< bno-count 1) "Megtalalva, de nem jon adat (ujraindul): bekotes, felhuzo ellenallasok")
+                (t "Mukodik")))
         (print (str-merge "roll " (str-from-n bno-roll "%.1f")
                 "  pitch " (str-from-n bno-pitch "%.1f")
                 "  yaw " (str-from-n bno-yaw "%.1f")))

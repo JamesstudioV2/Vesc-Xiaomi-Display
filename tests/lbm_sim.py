@@ -462,7 +462,11 @@ class Interp:
 
         def i2c_dev_at(addr):
             d = v.i2c_dev
-            return d if d is not None and d.present and d.addr == addr else None
+            if d is None or not d.present or d.addr != addr:
+                return None
+            if d.pins is not None and tuple(v.i2c[1:]) != d.pins:
+                return None  # SDA/SCL a bekötéshez képest felcserélve
+            return d
 
         def i2c_detect_addr(addr):
             if v.i2c is None:
@@ -726,8 +730,9 @@ class Bno085:
     rely on). Reading past the end of a packet returns zeros.
     """
 
-    def __init__(self, addr=0x4A):
+    def __init__(self, addr=0x4A, pins=("pin-rx", "pin-tx")):
         self.addr = addr
+        self.pins = pins          # (SDA, SCL) ahogy be van kötve; None = mindegy
         self.present = True
         self.seq = [0] * 6
         self.queue = []

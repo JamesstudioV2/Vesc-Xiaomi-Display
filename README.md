@@ -456,7 +456,8 @@ I2C-t több lábon is tud, de a második (BLE / „permanent UART”) port lába
 Ezért kell a BNO085-öt az **első** vezérlő COMM portjára kötni (a hátsón a
 kijelző és a gomb van).
 
-Bekötés az **első vezérlő COMM portjára**:
+Bekötés az **első vezérlő COMM portjára** (a kétportos lapokon ez a **COM1**:
+ugyanaz a port, amelyiken a hátsón a kijelző van; a COM2 a BLE / permanent UART):
 
 | BNO085 | Első vezérlő COMM | Megjegyzés |
 |---|---|---|
@@ -465,11 +466,27 @@ Bekötés az **első vezérlő COMM portjára**:
 | SDA | RX | I2C mód (PS0 = PS1 = 0, a legtöbb panelen ez az alap) |
 | SCL | TX | |
 
-A cím (0x4A vagy 0x4B) automatikusan megtalálható. UART-RVC módban
-(`(def bno-mode 'rvc)`, PS0 = 1) elég a BNO085 SDA/TX lábát az RX-re kötni.
-Az első vezérlő konzolján a `(bno)` parancs kiírja az állapotot és a szögeket.
+A címet (0x4A vagy 0x4B) a script megkeresi. Ha nem találja, a következő
+próbánál felcseréli az SDA-t és az SCL-t, így a fordítva bekötött vezetékkel is
+működik. Az I2C sebesség 100 kHz (`bno-i2c-rate`), ez hosszabb vezetékkel és
+gyenge felhúzóval is biztos. UART-RVC módban (`(def bno-mode 'rvc)`, PS0 = 1)
+elég a BNO085 SDA/TX lábát az RX-re kötni.
+
 Az I2C indítása a COMM port UART appját leállítja; az első vezérlőn amúgy is
-`No App` legyen.
+`No App` legyen. A `bno-enabled` csak a Balance és az Advanced-Balance ág első
+scriptjében `t`: a BNO085-höz azok közül töltsd fel **mindkét** scriptet.
+
+**Ellenőrzés** az első vezérlő Lisp konzolján: `(bno)`.
+
+| Kiírás | Jelentés, teendő |
+|---|---|
+| `allapot run`, a `mintak` nő, a szögek változnak a döntéskor | működik |
+| `Nem talalhato` (`allapot detect`) | nincs válasz: táp (3.3V), GND, SDA/SCL az RX/TX lábon, a panel I2C módban van-e (PS0 = PS1 = 0) |
+| `Megtalalva, de nem jon adat`, a `ujrainditas` nő | a szenzor válaszol, de a csomagok nem jönnek át: vezetékhossz, felhúzó ellenállások (a panelen általában 4,7–10 kΩ van) |
+| `A BNO085 olvasasa ki van kapcsolva` | a `main` ág első scriptje van fent: a balansz ágak scriptjét töltsd fel |
+
+Bekapcsoláskor a konzolon megjelenik: `BNO085 megtalalva, cim 0x4A` (felcserélt
+bekötésnél ezt is kiírja).
 
 ## Bluetooth (VESC Tool)
 

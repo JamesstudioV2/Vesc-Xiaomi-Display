@@ -28,6 +28,15 @@ def run(f, secs):
         f.vesc.now += DT
 
 
+def run_until(f, state, secs):
+    """Legfeljebb secs ideig fut, amíg a BNO állapota state nem lesz; az eltelt idő."""
+    t = 0.0
+    while t < secs and f.get("bno-state") != state:
+        run(f, DT)
+        t += DT
+    return t
+
+
 def imu_frames(f):
     return [d for sid, d in f.vesc.can_tx if sid == 0x4D2]
 
@@ -45,13 +54,13 @@ class BnoI2cTests(unittest.TestCase):
         f.call("init")
         self.assertTrue(f.get("bno-enabled"), "the balance mode uses the BNO085")
         f.call("bno-step")
-        self.assertEqual(f.vesc.i2c, ("rate-400k", "pin-rx", "pin-tx"))
+        self.assertEqual(f.vesc.i2c, ("rate-100k", "pin-rx", "pin-tx"))
 
     def test_startup_sequence(self):
         dev = Bno085(0x4A)
         f = front(dev)
         run(f, 0.02)
-        self.assertEqual(f.vesc.i2c, ("rate-400k", "pin-rx", "pin-tx"), "SDA = RX, SCL = TX")
+        self.assertEqual(f.vesc.i2c, ("rate-100k", "pin-rx", "pin-tx"), "SDA = RX, SCL = TX, 100 kHz")
         self.assertEqual(f.get("bno-addr"), 0x4A)
         self.assertEqual(dev.resets, 1, "soft reset first")
         run(f, 1.0)
@@ -123,6 +132,42 @@ class BnoI2cTests(unittest.TestCase):
         run(f, 0.02)
         self.assertAlmostEqual(f.get("bno-pitch"), 3.0, delta=0.05)
 
+    def test_swapped_sda_scl_is_found(self):
+        dev = Bno085(0x4A, pins=("pin-tx", "pin-rx"))   # SDA a TX-en, SCL az RX-en
+        f = front(dev)
+        run(f, 0.02)
+        self.assertEqual(f.get("bno-addr"), -1, "not found with the normal order")
+        run(f, 1.0)
+        self.assertEqual(f.get("bno-addr"), 0x4A)
+        self.assertTrue(f.get("bno-swap"))
+        self.assertEqual(f.vesc.i2c, ("rate-100k", "pin-tx", "pin-rx"))
+        run(f, 1.0)
+        self.assertEqual(f.get("bno-state"), "run")
+        dev.report(*quat_from_euler(0.0, 12.0, 0.0))
+        run(f, 0.01)
+        self.assertAlmostEqual(f.get("bno-pitch"), 12.0, delta=0.05)
+        text = " ".join(str(a) for p in f.vesc.printed for a in p)
+        self.assertIn("felcserelve", text)
+
+    def test_swap_order_kept_after_restart(self):
+        dev = Bno085(0x4A, pins=("pin-tx", "pin-rx"))
+        f = front(dev)
+        run(f, 2.2)
+        self.assertEqual(f.get("bno-state"), "run")
+        run(f, 1.1)                 # nincs minta: újraindítás
+        self.assertEqual(f.get("bno-restarts"), 1)
+        t = run_until(f, "run", 3.5)
+        self.assertLess(t, 1.95, "found again at the first try (the working order is kept)")
+        self.assertTrue(f.get("bno-swap"))
+        self.assertEqual(dev.resets, 2)
+
+    def test_status_hint_when_missing(self):
+        f = front(None)
+        run(f, 1.5)
+        f.call("bno")
+        text = " ".join(str(a) for p in f.vesc.printed for a in p)
+        self.assertIn("Nem talalhato", text)
+
     def test_address_0x4b(self):
         dev = Bno085(0x4B)
         f = front(dev)
@@ -138,8 +183,9 @@ class BnoI2cTests(unittest.TestCase):
         self.assertEqual(imu_frames(f), [])
         dev = Bno085()
         f.vesc.i2c_dev = dev   # később bedugva
-        run(f, 1.5)
+        t = run_until(f, "run", 3.5)
         self.assertEqual(f.get("bno-state"), "run")
+        self.assertLess(t, 3.0, "a keresés a két lábsorrendet váltogatva is hamar megtalálja")
         self.assertEqual(dev.feature, (0x08, 10000))
 
     def test_restart_when_reports_stop(self):
