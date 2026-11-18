@@ -41,6 +41,10 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   BLE/permanent UART lábait egyáltalán nem). Meghajtó az `elso_vezerlo.lisp`-ben: I2C SHTP (SDA = RX, SCL = TX,
   cím 0x4A/0x4B, soft reset, hirdetés kiolvasása, game rotation vector 0x08 100 Hz) vagy UART-RVC; roll/pitch/yaw
   CAN SID **0x4D2**-n (i16, 0,01°). `bno-enabled` main-en nil, a balansz ágakon t. Valódi szenzoron nincs kipróbálva.
+  **Megerősítve (2026-11-18):** a felhasználó a BNO085-öt az első vezérlő **COM1** portjára kötötte, **I2C**-n. A lapokon
+  COM1 = COMM (UART3, `'pin-rx`/`'pin-tx`, a hátsón ezen a kijelző), COM2 = a második (BLE/permanent UART) port.
+  A keresés felváltva próbálja a két SDA/SCL sorrendet (`bno-swap`), az I2C 100 kHz (`bno-i2c-rate`), a `(bno)`
+  szöveges tippet is ad.
 - **Advanced-Balance, két kipörgésgátló:** az általános (`tc-...`, 3 kattintás, szigorúbb) és az AB-kipörgésgátló
   (`ab-tc-...`, laza, csak AB módban, mindig be). AB módban a szorzóik összeszorzódnak: az első keréknél az általános
   az első vezérlő áram-szorzóján (CAN) hat, az AB-é a `canset-current-rel`-ben; a hátsónál mindkettő az `ab-drive`
@@ -51,7 +55,8 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   (5-45°) a célszög, `eeprom-store-f` 10-es címre, induláskor `load-target-angle` tölti; siker: 5 sípolás + a
   kijelző 2 s-ig a szöget mutatja; hiba: 61-es kód. `(celszog-torles)` -1-et ír. Az AB szál hajtja végre
   (`ab-save-req`). Fék + 2 = AB be/ki, 3 (fékkel is) = TC. AB IMU nélkül: 62-es kód. BNO085: `imu-source`
-  mint a Balance ágon.- Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
+  mint a Balance ágon.
+- Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
 - Dual: a hátsó ADC app „Multiple VESCs over CAN”, az első vezérlőn `elso_vezerlo.lisp`, saját CAN SID protokoll (0x4D0 parancs, 0x4D1 ack).
 - Profilok: P1 (alap, „rendőr”) = csak hátsó motor, 3 km/h berúgás, ECO 6 km/h/100 W, S 25 km/h/500 W.
   P2 (bekapcsoláskor nyomva tartott gáz) = mindkét motor, nincs berúgás, S korlátlan, D korlátlan sebesség 60% fázisárammal, álló helyzetben akku % a kijelzőn.
@@ -157,7 +162,9 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
    `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
-   BNO085: meg kell erősíteni, hogy a „COM2” az első vezérlő COMM portja, és I2C-n van-e bekötve.
+   BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
+   `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
+   AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
    Gomb: működik-e az RX-es bekötéssel (ha nem: `(gomb-teszt)` kimenete).
 2. Hardveres próba felemelt kerékkel (README „Első próba” lista), visszajelzés a felhasználótól.
 3. A becsült értékek (P1 D, P2 ECO, P1 első fék) megerősítése vagy javítása.
