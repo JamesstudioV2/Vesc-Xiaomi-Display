@@ -154,6 +154,10 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   az első PPM láb (PB6) ugyanaz, mint a hátsón a működő féklámpáé. Mindkét `(lampa-teszt)` `EREDMENY:` sort ír,
   README mérési táblázat, tartalék láb: első `light-pin 'pin-swdio` vagy hátsó `headlight-pin` (main-ből átvéve).
 
+- 2026-11-23 (4): A main-ből: a külső lámpa a hátsó vezérlő SWD csatlakozójának SWCLK lábán (alapérték,
+  `headlight-pin 'pin-swclk`), a kipörgésgátló csak az első kereket korlátozza (nincs `tc-rear`; balansz alatt
+  továbbra sem aktív, a balansz korlátait nem írja).
+
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
    `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
