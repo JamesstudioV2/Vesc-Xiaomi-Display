@@ -187,6 +187,10 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   A main-en nem volt ilyen név. Az ellenőrző és a szimulátor kiegészítve; a régi scriptek a szimulátorban
   ugyanazzal a hibával állnak meg, mint a valódi firmware-en.
 
+- 2026-11-23 (3): A kijelző működik, a külső lámpa továbbra sem (nyáksérülés sem kizárt). Kód átnézve, helyes;
+  az első PPM láb (PB6) ugyanaz, mint a hátsón a működő féklámpáé. Mindkét `(lampa-teszt)` `EREDMENY:` sort ír,
+  README mérési táblázat, tartalék láb: első `light-pin 'pin-swdio` vagy hátsó `headlight-pin` (main-ből átvéve).
+
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
    `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
