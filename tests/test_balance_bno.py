@@ -166,7 +166,8 @@ class BalanceTractionTests(unittest.TestCase):
             L.pump()
         self.assertFalse(r.i.call("tc-active"))
         self.assertEqual(r.v.conf["l-current-max-scale"], 1.0, "balance keeps full current")
-        self.assertEqual(r.g("tc-rear"), 1.0)
+        self.assertEqual(r.g("tc-front"), 1.0)
+        self.assertNotIn("tc-rear", r.i.g.vars, "the TC never touches the rear wheel")
 
 
 if __name__ == "__main__":
