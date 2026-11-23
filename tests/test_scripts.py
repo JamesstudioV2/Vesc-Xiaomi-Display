@@ -653,3 +653,19 @@ class FirmwareCompatTests(unittest.TestCase):
         self.assertEqual(r.i.call("conf-try", Symbol("adc-tc"), 7), 7)
         self.assertEqual(r.i.call("conf-try", Symbol("adc-v1-start"), 7), 0.8)
         self.assertIsNone(r.i.call("conf-set-try", Symbol("adc-tc"), 0))
+
+
+class LoaderRuleTests(unittest.TestCase):
+    """A valódi LispBM olvasó szabályai, amelyek betöltéskor állítják le a scriptet."""
+
+    def test_ext_prefix_and_builtins_cannot_be_defined(self):
+        i = Interp()
+        for code in ("(def ext-roll 0.0)", "(defun ext-f () 1)", "(def list 1)",
+                     "(defun f (car) 1)"):
+            with self.assertRaises(Exception, msg=code):
+                i.run(code)
+
+    def test_scripts_load_without_redefinition(self):
+        for path in (REAR, FRONT):
+            i = Interp()
+            i.load(path)   # hibát dobna, ha egy név "ext-"-tel kezdődne vagy beépített lenne
