@@ -99,8 +99,8 @@ ikon gyullad ki. A mi scriptünk 100-at (0x64) küld (`dash-light-value`).
 |---|---|---|
 | Gomb | RX láb (1 kΩ felhúzó), `gpio-read`, 3 mintás többségi döntés | ugyanígy az RX lábon, **470 Ω** felhúzóval. 3 mintás lenyomás, 2 mintás felengedés, egy pergés nem bont ketté egy nyomást. A gomb lába paraméter (`button-pin`) |
 | Féklámpa | nincs (lucidnx: PWM) | **PPM láb GPIO**: állandóan ég, fékezéskor 5 Hz-en villog |
-| Első lámpa | 1-es érték: csak ikon (lucidnx: 0x64, a kijelző lámpája is) | 0x64 a kijelzőnek (a kijelző lámpája + ikon) + külső lámpa az **első vezérlő PPM lábán** (CAN-en kapcsolva) |
-| Kipörgésgátló | VESC ADC app beépített TC-je (lucidnx csak jelzi a csúszást) | saját, csak 2-es profilban, a két vezérlő `l-current-max-scale`-jén keresztül; az ADC app TC-jét kikapcsolja |
+| Első lámpa | 1-es érték: csak ikon (lucidnx: 0x64, a kijelző lámpája is) | 0x64 a kijelzőnek (a kijelző lámpája + ikon) + külső lámpa a **hátsó vezérlő SWD csatlakozójának SWCLK lábán** (opcionálisan az első PPM lábán, CAN-en) |
+| Kipörgésgátló | VESC ADC app beépített TC-je (lucidnx csak jelzi a csúszást) | saját, csak 2-es profilban, **csak az első kereket** korlátozza a hátsóhoz képest (az első vezérlő `l-current-max-scale`-jén keresztül); az ADC app TC-jét kikapcsolja (ahol a firmware engedi) |
 | Profilváltás | gomb-kombináció menet közben | **bekapcsoláskor nyomva tartott gáz** → 2-es profil, utána a gáz elengedéséig nincs kimenet |
 | Berúgás | `app-disable-output` (a fék is kiesik) | a gázt az ADC app start-feszültségére fogja, **a fék végig működik**, és az ADC rámpa is érvényes marad |
 | Dual motor | `rcode-run` (code server csomag) vagy `can-cmd` | saját 8 bájtos CAN SID üzenet 10 Hz-en (2-es profilban 50 Hz) + 8 bájtos visszajelzés (lámpa, verzió, hibakód, sebesség). Az első vezérlő **alapból tiltva van**, és 1 s csend után újra tiltja magát |

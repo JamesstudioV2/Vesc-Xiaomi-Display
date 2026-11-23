@@ -45,7 +45,13 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   COM1 = COMM (UART3, `'pin-rx`/`'pin-tx`, a hátsón ezen a kijelző), COM2 = a második (BLE/permanent UART) port.
   A keresés felváltva próbálja a két SDA/SCL sorrendet (`bno-swap`), az I2C 100 kHz (`bno-i2c-rate`), a `(bno)`
   szöveges tippet is ad.
-- **Advanced-Balance, két kipörgésgátló:** az általános (`tc-...`, 3 kattintás, szigorúbb) és az AB-kipörgésgátló
+- **Advanced-Balance, kipörgésgátlók csak az első keréken (2026-11-23):** az általános (3x gomb) és az AB-TC is csak
+  az első kereket korlátozza a hátsóhoz képest; nincs `tc-rear` / `ab-tc-rear`, a hátsó AB áram = min(gáz, szögkorlát).
+- **Advanced-Balance, egyetlen IMU (2026-11-23):** a felhasználónak csak a BNO085 van (első vezérlő COM1), a vezérlőkben
+  nincs IMU. Minden szög ebből jön (`imu-source 'bno085`); a `(szog)` BNO módban nem kérdezi a belső IMU-t; `imu-hint`
+  (első nem válaszol / nem látja a BNO-t / látja, de nem érkezik: `imu-sid`), induláskori egyszeri figyelmeztetés
+  (`imu-check`, 8 s), `imu-frames`, `front-bno` (ack bit1). Teszt: AB a belső IMU függvényei nélkül is működik.
+- **Advanced-Balance, két kipörgésgátló (korábbi leírás):** az általános (`tc-...`, 3 kattintás, szigorúbb) és az AB-kipörgésgátló
   (`ab-tc-...`, laza, csak AB módban, mindig be). AB módban a szorzóik összeszorzódnak: az első keréknél az általános
   az első vezérlő áram-szorzóján (CAN) hat, az AB-é a `canset-current-rel`-ben; a hátsónál mindkettő az `ab-drive`
   áramában, de az általános csak két keréken (`bal-angle` <= `ab-engage-angle`). AB módban a hátsó
@@ -190,6 +196,10 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - 2026-11-23 (3): A kijelző működik, a külső lámpa továbbra sem (nyáksérülés sem kizárt). Kód átnézve, helyes;
   az első PPM láb (PB6) ugyanaz, mint a hátsón a működő féklámpáé. Mindkét `(lampa-teszt)` `EREDMENY:` sort ír,
   README mérési táblázat, tartalék láb: első `light-pin 'pin-swdio` vagy hátsó `headlight-pin` (main-ből átvéve).
+
+- 2026-11-23 (4): A main-ből: a külső lámpa a hátsó SWD SWCLK lábán (alapérték), a kipörgésgátló csak az első
+  kereket korlátozza. Itt ezen felül az AB-kipörgésgátló is csak az elsőt fogja, és az AB az egyetlen BNO085-tel
+  (első COM1) működik, diagnosztikával (ld. fent). 189 teszt.
 
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:

@@ -354,14 +354,16 @@ class TractionTests(unittest.TestCase):
         self.assertLess(last_can(r, "current-rel")[2], 0.05)
         self.assertAlmostEqual(r.v.motor_current, 60.0, places=1, msg="rear not touched")
 
-    def test_rear_spinning_faster_is_reduced(self):
+    def test_rear_spinning_faster_is_not_reduced(self):
         r = ab_on()
         r.thr = FULL
         r.kmh(16.0)
         r.v.can_speed = {12: 10.0 / 3.6}
         r.v.can_devs = [12]
         tick(r, secs(1.0))
-        self.assertLess(r.v.motor_current, 25.0)
+        self.assertAlmostEqual(r.v.motor_current, 60.0, places=1,
+                               msg="the traction control never touches the rear wheel")
+        self.assertAlmostEqual(last_can(r, "current-rel")[2], 1.0, places=2)
 
     def test_small_difference_is_ignored(self):
         r = ab_on()

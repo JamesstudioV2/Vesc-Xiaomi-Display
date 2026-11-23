@@ -35,7 +35,7 @@ script kezeli.
 | D | 20 km/h, 300 W ¹ | korlátlan sebesség, **60% fázisáram** |
 | S | 25 km/h, 500 W | korlátlan |
 | Kijelző álló helyzetben | sebesség (0) | **akku %** |
-| Kipörgésgátló | nincs (csak a hátsó hajt) | **van**, induláskor bekapcsolva, 3x gombbal ki/be |
+| Kipörgésgátló | nincs (csak a hátsó hajt) | **van** (csak az első kereket fogja vissza), induláskor bekapcsolva, 3x gombbal ki/be |
 
 ¹ Ezt az értéket nem adtad meg, ezért becsült értéket írtam be. A
 `hatso_vezerlo.lisp` elején egy sorban átírható (`p1-drive`, `p2-eco`).
@@ -45,7 +45,7 @@ Tool-ban beállított motoráram- és akkuáram-limitek maradnak érvényben.
 
 **Kijelző gomb (a kijelzőben, zöld vezeték → RX):**
 - 1x nyomás: lámpa ki/be. Egyszerre kapcsol a kijelző saját lámpája, a lámpa
-  ikon és a külső lámpa (az első vezérlő PPM kimenete).
+  ikon és a külső lámpa (a hátsó vezérlő SWD csatlakozójának SWCLK lába).
 - 2x gyors nyomás: módváltás **D → S → ECO → D**, 1 sípolással.
 - **Behúzott fékkel 2x:** Advanced Balance be/ki (csak 2-es profilban, ld. lent).
 - 3x gyors nyomás (fékkel vagy anélkül): **kipörgésgátló** be/ki, 3 sípolással
@@ -54,13 +54,14 @@ Tool-ban beállított motoráram- és akkuáram-limitek maradnak érvényben.
   az Advanced Balance célszöge (5 sípolás, a kijelző 2 s-ig a szöget mutatja).
 - Egyéb számú, illetve hosszú (1,5 s-nál hosszabb) nyomás: nincs funkciója.
 
-**Kipörgésgátló (2-es profil):** a két kerék sebességét hasonlítja össze. Ha az
-egyik kerék `tc-slip` (alapból 2 km/h) fölötti különbséggel gyorsabban forog,
-mint a másik, annak a kerékmotornak a hajtását lineárisan csökkenti, és
-`tc-range` (3 km/h) további különbségnél nullára veszi. Amikor a csúszás
-megszűnik, `tc-recover` (0,3 s) alatt áll vissza a teljes hajtás. Csak a
-hajtásba szól bele, a fékbe nem. A csökkentés a VESC áram-szorzóján keresztül
-hat, így a VESC Tool ADC beállításai (görbe, rámpa) változatlanul érvényesek.
+**Kipörgésgátló (2-es profil):** csak az **első** kereket korlátozza a hátsóhoz
+képest. Ha az első kerék `tc-slip` (alapból 2 km/h) fölötti különbséggel
+gyorsabban forog, mint a hátsó, az első motor hajtását lineárisan csökkenti, és
+`tc-range` (3 km/h) további különbségnél nullára veszi. A **hátsó kerékbe nem
+avatkozik bele**. Amikor a csúszás megszűnik, `tc-recover` (0,3 s) alatt áll
+vissza a teljes hajtás. Csak a hajtásba szól bele, a fékbe nem. A csökkentés az
+első vezérlő áram-szorzóján keresztül hat, így a VESC Tool ADC beállításai
+(görbe, rámpa) változatlanul érvényesek.
 Induláskor mindig bekapcsolva indul. A hangoláshoz a `(tc-teszt)` konzolparancs
 10 s-ig kiírja a két kerék sebességét és a szorzókat.
 
@@ -108,17 +109,21 @@ induláskor, a script elindulása előtt az ADC app ne lebegő bemenetet olvasso
 | Vezérlő, láb | Fogyasztó |
 |---|---|
 | hátsó, PPM jel (servo) | féklámpa MOSFET gate |
-| **első**, PPM jel (servo) | első lámpa MOSFET gate (a hátsó CAN-en kapcsolja) |
+| hátsó, **SWD csatlakozó SWCLK** lába | külső (első) lámpa MOSFET gate |
 
-**Miért nem az ADC2-n van a lámpa?** A firmware engedi az ADC lábat
-kimenetnek állítani (`gpio-configure`), és a script ezt csinálta is. Sok VESC
-lapon viszont az ADC bemenetek elé védő- és szűrőkör kerül (soros ellenállás,
-osztó vagy lehúzó ellenállás, kondenzátor), hogy 5 V-os gázkart is el lehessen
-viselni. Ezen keresztül a láb nem tud elég feszültséget vagy áramot adni egy
-MOSFET gate-jének. A PPM láb közvetlenebbül megy a processzorra, a hátsón ez
-működik is, ezért a lámpa az első vezérlő ugyanilyen PPM lábára került. Ha
-mégis a hátsó ADC2-t szeretnéd: `(def headlight-on-front nil)`, és mérd meg a
-lábon a ~3,3 V-ot bekapcsolt lámpánál.
+A hátsó SWD csatlakozón általában 3.3V, SWDIO, SWCLK és GND van. A MOSFET
+gate-je az **SWCLK**-ra kerül, a source a GND-re. Ez közvetlen processzorláb, 3,3
+V-os jellel. Induláskor a processzor ezt a lábat lehúzza, így a lámpa a VESC
+bootolása alatt sem villan fel (az SWDIO-t felhúzza, ezért az kevésbé jó). Az
+SWD programozó a script indulása után újraindításig nem működik, a VESC Tool
+USB-n igen.
+
+**Miért nem az ADC2-n vagy az első vezérlő PPM lábán van a lámpa?** Az ADC
+bemenetek elé sok lapon védő- és szűrőkör kerül (soros ellenállás, osztó,
+kondenzátor), ezen keresztül a láb nem tud MOSFET gate-et kapcsolni. Az első
+vezérlő PPM lábán a lámpa nem működött (valószínűleg a láb vagy a nyák sérült).
+Ha mégis ott szeretnéd: `(def headlight-on-front t)` a hátsó scriptben, ekkor a
+hátsó CAN-en kéri, az első a PPM lábán kapcsolja.
 
 **Miért ilyen kicsi (470 Ω) a felhúzó?** A kijelző a zöld vezetéket
 nyugalmi állapotban is terheli. Az eredeti projektek 1 kΩ-ot használnak, és a
@@ -135,9 +140,8 @@ Tanácsok a kimenetekhez:
 - Ha a lámpa a kijelzővel közös 5 V-ról kap tápot, a feszültségesés elhúzhatja
   a gáz- és fékértéket. Ilyenkor külön tápról járasd a lámpát.
 
-**Első vezérlő:** CAN (CAN-H, CAN-L, GND) a hátsóval, motor/akku, a PPM lábon a
-külső lámpa MOSFET-je, és opcionálisan a COMM portján egy BNO085 IMU (ld.
-[Külső IMU](#külső-imu-bno085)).
+**Első vezérlő:** CAN (CAN-H, CAN-L, GND) a hátsóval, motor/akku, és
+opcionálisan a COMM portján egy BNO085 IMU (ld. [Külső IMU](#külső-imu-bno085)).
 
 ## VESC Tool beállítások
 
@@ -194,11 +198,12 @@ app) van beállítva, a script UART-indítása a firmware-ben véglegesen
 
 ### Első vezérlő
 - **App to Use:** `No App`. A parancsokat a hátsó ADC app küldi CAN-en.
-- **Servo Output:** kikapcsolva, mert a PPM lábat a lámpa kapcsolja.
+- **Servo Output:** kikapcsolva (ha a lámpát az első PPM lábára teszed, kötelező).
 - A CAN státuszüzenetek maradjanak bekapcsolva (alapértelmezés), mert ebből látja
   a hátsó vezérlő az első hőmérsékletét és azt, hogy jelen van.
 - A kerékátmérő és a póluspár itt is pontos legyen: a kipörgésgátló az első
   vezérlő saját sebességét hasonlítja a hátsóéhoz.
+- A kipörgésgátló az első vezérlő áram-szorzóját állítja (a CAN parancsban).
 
 ## Feltöltés
 
@@ -251,51 +256,30 @@ hiba esetén is fut tovább, de a hibát jelezni kell.
 ### A lámpa nem működik
 
 Két külön lámpa van: a **kijelző saját lámpája** (a kijelző kapcsolja a
-hátsótól kapott lámpa mező alapján) és a **külső lámpa** az első vezérlő PPM
-lábán (MOSFET). Az ikon mindkettőtől függetlenül kigyullad.
-
-> **Bekötés:** a külső lámpa N-FET gate-je az **első** vezérlő PPM (servo)
-> csatlakozójának **jel** lábára kell kerüljön, nem a hátsóra, és a két
-> vezérlő GND-je közös legyen. A rajz korábbi változatán a gate vezetéke a
-> hátsó vezérlőtől indult, ez félrevezető volt.
+hátsótól kapott lámpa mező alapján) és a **külső lámpa** (MOSFET). Az ikon
+mindkettőtől függetlenül kigyullad. A külső lámpa alapból a **hátsó vezérlő
+SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
 
 1. **Kijelző lámpája:** a scriptnek 100-at kell küldenie (`dash-light-value`).
    Ha a régi script fut még, csak az ikon gyullad ki: töltsd fel újra a hátsó
    scriptet.
 2. **Külső lámpa, hátsó vezérlő konzolja:** `(lampa-teszt)`. Háromszor be- és
-   kikapcsolja a lámpát, soronként kiírja, mit jelez vissza az első vezérlő
-   (`parancs` = megkapta-e, `lab` = az első vezérlő lámpa lábának visszaolvasott
-   szintje), a végén pedig egy `EREDMENY:` sort:
-
-   | `EREDMENY:` | Teendő |
-   |---|---|
-   | az első vezérlő nem válaszol, vagy régi script fut rajta | töltsd fel az új `lisp/elso_vezerlo.lisp`-et az **első** vezérlőre (a kijelzőn 60-as vagy 50-es hiba) |
-   | nem követi a lámpa parancsot | CAN kapcsolat, fut-e az első script (`(status)` az elsőn) |
-   | a parancs eljut, az első vezérlő PPM lába kapcsol | a szoftver rendben van: 3. pont, mérés |
-   | az első vezérlő lába nem megy magasra | 3. pont, lehúzott lámpa vezetékkel |
-
-3. **Közvetlenül az első vezérlőn** (VESC Tool-ban a CAN-listából az első
-   vezérlő, Lisp konzol): `(lampa-teszt)`. A hátsótól függetlenül 5x 1 s-ra
-   bekapcsolja a lámpa lábat, kiírja az App to Use beállítást (0 = No App
-   legyen; ha 1 vagy 4, a PPM app is ezt a lábat használja) és a végén egy
-   `EREDMENY:` sort. Közben **mérd multiméterrel a PPM csatlakozó jel és GND
-   lába között** a feszültséget:
+   kikapcsolja a lámpát, kiírja a láb visszaolvasott szintjét (`lab`), a végén
+   pedig egy `EREDMENY:` sort. Közben **mérd multiméterrel az SWD csatlakozón
+   az SWCLK és a GND között** a feszültséget:
 
    | Eredmény és mérés | Ok | Teendő |
    |---|---|---|
-   | `rendben kapcsol`, a csatlakozón BE-nél ~3,3 V, KI-nél 0 V, a lámpa mégsem ég | a jel kijut, a hiba utána van | logikai szintű N-FET? a gate a **jel** lábon? a source a GND-n? közös a GND a lámpa tápjával? van tápja a lámpának? |
-   | `rendben kapcsol`, de a csatlakozón nincs feszültség | a láb kapcsol, de a jel nem jut ki a csatlakozóig | a nyákon sérült a láb és a csatlakozó közötti út (soros ellenállás, vezeték, forrasztás): használj másik lábat (4. pont) |
-   | `bekapcsolva sem megy magasra` | valami lehúzza a lábat, vagy sérült | húzd le a lámpa vezetékét, és futtasd újra: ha úgy jó, a MOSFET gate zárlatos (cseréld); ha úgy sem, a vezérlő lába sérült (4. pont) |
+   | `rendben kapcsol`, BE-nél ~3,3 V, KI-nél 0 V, a lámpa mégsem ég | a jel kijut, a hiba utána van | logikai szintű N-FET? a gate az SWCLK-n? a source a GND-n? közös a GND a lámpa tápjával? van tápja a lámpának? |
+   | `rendben kapcsol`, de a csatlakozón nincs feszültség | rossz láb, vagy a csatlakozó nincs a lapra forrasztva | ellenőrizd a csatlakozó lábkiosztását (a lap leírása vagy a nyákon a felirat) |
+   | `bekapcsolva sem megy magasra` | valami lehúzza a lábat | húzd le a lámpa vezetékét, és futtasd újra: ha úgy jó, a MOSFET gate zárlatos |
 
-4. **Másik láb, ha a PPM láb vagy a nyák sérült:**
-   - az első vezérlő **SWD** csatlakozója: az első scriptben
-     `(def light-pin 'pin-swdio)` (vagy `'pin-swclk`), a MOSFET gate-je erre a
-     lábra kerül. Ez közvetlen processzorláb, 3,3 V-os jellel. Az SWD
-     programozó ezután újraindításig nem működik (a VESC Tool USB-n igen).
-   - vagy a hátsó vezérlő SWD lába, CAN nélkül: a hátsó scriptben
-     `(def headlight-on-front nil)` és `(def headlight-pin 'pin-swdio)`.
-   - Az ADC lábak sok lapon nem tudnak MOSFET-et kapcsolni (a bemenet
-     védőköre miatt), ezért azok nem jók erre.
+3. **Ha a lámpát az első vezérlő PPM lábára kötöd** (`(def headlight-on-front t)`):
+   a hátsó `(lampa-teszt)`-je az első vezérlő visszajelzését írja ki (`elso
+   vezerlo parancs` = megkapta-e, `lab` = az első lámpa lábának szintje), az
+   első vezérlő Lisp konzolján pedig a `(lampa-teszt)` közvetlenül kapcsolja
+   a PPM lábat (és kiírja az App to Use beállítást: 0 = No App legyen). Mérés a
+   PPM csatlakozó jel és GND lába között, ugyanúgy, mint fent.
 
 A kijelzőn megjelenő hibakódok jelentése a [Hibakódok](#hibakódok) fejezetben van.
 
@@ -340,7 +324,7 @@ nem szereplő hibák 50 fölötti saját kódot kapnak.
 | 59 | Script hiba | script | a Lisp konzol `hiba-...` sora |
 | 60 | Az első vezérlőn régi script fut | script | töltsd fel az új `elso_vezerlo.lisp`-et (enélkül nincs külső lámpa és kipörgésgátló) |
 | 61 | A célszög mentése nem sikerült | script | állj meg, húzd be a féket, a szög 5° és 45° között legyen, legyen IMU adat; a konzol kiírja az okát |
-| 62 | Nincs IMU adat (az AB nem kapcsolható be) | script | fut-e a BNO085 az első vezérlőn (`(bno)` az első konzolján), `imu-source` |
+| 62 | Nincs IMU adat (az AB nem kapcsolható be) | script | a hátsó konzolján `(szog)`: kiírja, hol szakad meg a lánc; az első konzolján `(bno)` |
 | 69 | Egyéb VESC hiba | VESC (más) | a konzol kiírja a VESC hibakód számát |
 
 **Kar hibák (14 / 15 / 16):** a kijelző a karok jelét 0–255 közötti értékként
@@ -365,7 +349,7 @@ kód jelenik meg, és nincs külső lámpa és kipörgésgátló.
 2. Gáz álló helyzetben: a motor **nem** indul (1-es profil). Kézzel pörgesd fel a
    hátsó kereket 3 km/h fölé, ekkor a gáz működik.
 3. Fékkar: a féklámpa villog, a motor fékez.
-4. Gomb 1x: a kijelző lámpája, a külső lámpa és a lámpa ikon bekapcsol. Gomb
+4. Gomb 1x: a kijelző lámpája, a külső lámpa (hátsó SWD / SWCLK) és a lámpa ikon bekapcsol. Gomb
    2x: a mód S lesz, 1 sípolással.
 5. Kikapcsolás, majd bekapcsolás nyomva tartott gázzal: 2 sípolás. Amíg nyomod a
    gázt, semmi nem történik. Elengedés után a gáz álló helyzetből is működik, és
@@ -373,9 +357,10 @@ kód jelenik meg, és nincs külső lámpa és kipörgésgátló.
 6. A `(status)` paranccsal ellenőrizd, hogy az első vezérlő válaszol-e
    (`elso-hiba` = nil, `elso-verzio` = 2).
 7. Kipörgésgátló a 2-es profilban, felemelt kerekekkel: adj kevés gázt, és fogd
-   meg kézzel az egyik kereket. A `(tc-teszt)` kiírásában a másik (gyorsabban
-   pörgő) kerék szorzója 1 alá esik, a motorja visszavesz. Gomb 3x: 3 sípolás, a
-   kipörgésgátló kikapcsol, ugyanettől a próbától már nem vesz vissza.
+   meg kézzel a **hátsó** kereket. A `(tc-teszt)` kiírásában az első kerék
+   szorzója 1 alá esik, az első motor visszavesz. (Ha az elsőt fogod meg, nem
+   történik semmi: a hátsóba a kipörgésgátló nem avatkozik bele.) Gomb 3x: 3
+   sípolás, a kipörgésgátló kikapcsol, ugyanettől a próbától már nem vesz vissza.
 
 ## Advanced Balance (kísérleti)
 
@@ -408,16 +393,17 @@ módváltás.
   gyors emelkedést a szögsebesség alapján előre fékezi. Az ab-engage-angle (3°)
   alatt, két keréken nem szól bele.
 - **Az első motor** ugyanazt a gázt kapja, mint normál menetben.
-- **Két kipörgésgátló** van, külön hangolhatók:
-  - Az **AB-kipörgésgátló** (`ab-tc-...`) laza szinkron a két kerék között, csak
-    AB módban működik, és **mindig be van kapcsolva**: ha az egyik kerék
-    `ab-tc-slip`-nél (3 km/h) gyorsabban forog, a hajtása fokozatosan csökken,
+- **Két kipörgésgátló** van, külön hangolhatók. **Mindkettő csak az első
+  kereket korlátozza** a hátsóhoz képest, a hátsó kerékbe egyik sem avatkozik
+  bele (a hátsó áramát csak a szögkorlát veheti el):
+  - Az **AB-kipörgésgátló** (`ab-tc-...`) laza szinkron, csak AB módban működik,
+    és **mindig be van kapcsolva**: ha az első kerék `ab-tc-slip`-nél (3 km/h)
+    gyorsabban forog, mint a hátsó, a hajtása fokozatosan csökken,
     `ab-tc-range`-nyi (5 km/h) további különbségnél 0. Felemelt elejénél így az
     első kerék nagyjából együtt forog a hátsóval, nem pörög túl a levegőben.
   - Az **általános kipörgésgátló** (`tc-...`, 3x gombbal ki/be, ld. fent)
-    szigorúbb. AB módban is hat: az első kerékre mindig, a hátsóra csak két
-    keréken (felemelt elejénél az első kerék nem viszonyítási alap, a hátsót
-    nem vágja vissza miatta). Ha kikapcsolod, az AB-kipörgésgátló marad.
+    szigorúbb, AB módban is hat (az első vezérlő áram-szorzóján keresztül). Ha
+    kikapcsolod, az AB-kipörgésgátló marad.
   - Ha mindkettő beavatkozik, a szorzóik összeszorzódnak.
 - **Hátramenet:** a szögkorlát legfeljebb 3 km/h-ig tolathat hátra
   (`ab-max-reverse`), hogy állva is meg tudja fogni az átfordulást.
@@ -454,15 +440,35 @@ honnan jön a célszög (`mentett` / `kodbol`).
 
 ### Előfeltétel: IMU
 
-**Alapból a BNO085** adja a szöget, az első vezérlő COMM portján (ld.
-[Külső IMU](#külső-imu-bno085)). A saját szenzorfúziója (game rotation vector,
-magnetométer nélkül) adja a szöget, a VESC Tool IMU beállításai ilyenkor nem
-számítanak. A panel legyen mereven a vázhoz rögzítve. Az első vezérlő
-konzolján a `(bno)` mutatja, hogy fut-e (`allapot run`, nő a `mintak`).
+**Egyetlen IMU elég: a BNO085 az első vezérlő COM1 (COMM) portján** (bekötés:
+[Külső IMU](#külső-imu-bno085)). A vezérlőkben nem kell IMU, a VESC Tool
+**IMU Type** beállítása lehet `Off`. A BNO085 saját szenzorfúziója (game
+rotation vector, magnetométer nélkül, így a motorok mágneses tere nem zavarja)
+adja a szöget; az első vezérlő 100 Hz-en küldi CAN-en a hátsónak. Minden szög
+innen jön: a célszög-korlát, a lekapcsolás (60° oldalra/hátra), a célszög
+mentése és a felemelt eleje felismerése.
 
-**A VESC belső IMU-jával** (`(def imu-source 'vesc)` a hátsó scriptben) a hátsó
-VESC-nek kell, hogy legyen IMU-ja (gyorsulásmérő + giroszkóp), beépítve vagy a
-VESC Tool által ismert külső modulként. A VESC Tool-ban: **App Settings → IMU**:
+**Rögzítés:** a BNO085 panel a **vázhoz / a tálcához** legyen mereven rögzítve,
+**ne a kormányrúdhoz** (az a kormányzással elfordul). Lehetőleg vízszintesen, úgy,
+hogy az egyik tengelye (X vagy Y) a roller hossztengelyével párhuzamos legyen.
+Rezgéscsillapító ne legyen alatta.
+
+**Ellenőrzés:**
+- Az első vezérlő Lisp konzolján `(bno)`: `allapot run`, nő a `mintak`.
+- A hátsó konzolján `(szog)`: a szögek változnak a döntéskor, a fejlécben nő a
+  `minta` szám. Ha nincs adat, a `(szog)` kiírja, hol szakad meg a lánc
+  (az első vezérlő nem válaszol / nem látja a BNO085-ot / látja, de a szögek
+  nem érkeznek meg).
+- Induláskor, ha 8 s után sincs IMU adat, a hátsó konzol egyszer
+  `FIGYELEM: nincs IMU adat ...` sort ír ugyanezzel a tippel. A `(status)`
+  `imu-mintak` és `elso-bno` mezője is ezt mutatja.
+- Ha menet közben 0,1 s-ig nem jön minta, a bekapcsolt AB lekapcsol (`imu`,
+  58-as kód), IMU adat nélkül pedig be sem kapcsol (3 sípolás, 62-es kód).
+
+**A VESC belső IMU-jával** (csak ha a vezérlődben van IMU: `(def imu-source 'vesc)`
+a hátsó scriptben) a hátsó VESC-nek kell, hogy legyen IMU-ja (gyorsulásmérő +
+giroszkóp), beépítve vagy a VESC Tool által ismert külső modulként. A VESC
+Tool-ban: **App Settings → IMU**:
 - **IMU Type:** a vezérlőn lévő IMU (ha `Off`, az Advanced Balance nem kapcsol be).
 - **AHRS Mode:** `Madgwick Fusion`. Az **Accel Confidence Decay**-jel csökkenthető,
   hogy gyorsításkor elcsússzon a szög.
@@ -534,14 +540,16 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   korlátai `(km/h watt fázisáram-szorzó)` formában.
 - `boot-mode`: induló mód (1 = D, 2 = ECO, 4 = S).
 - `light-default`: az első lámpa induláskor be legyen-e kapcsolva.
-- `headlight-on-front`, `headlight-pin`: a lámpa az első vezérlő lábán (CAN-en
-  kapcsolva) vagy a hátsó vezérlő `headlight-pin` lábán (pl. `'pin-swdio`).
+- `headlight-on-front`, `headlight-pin`: a külső lámpa a hátsó vezérlő
+  `headlight-pin` lábán (alapból `'pin-swclk`, az SWD csatlakozó), vagy
+  `headlight-on-front t` esetén az első vezérlő PPM lábán (CAN-en kapcsolva).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
   is ég, 1 = csak az ikon).
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
-  állapota, az engedélyezett sebességkülönbség (km/h), az a további különbség,
-  amelynél a hajtás nullára csökken (km/h), és a visszaállás ideje (s). Szigorúbb
-  kipörgésgátlóhoz kisebb `tc-slip` és `tc-range`, lazábbhoz nagyobb.
+  állapota, mennyivel foroghat az első kerék gyorsabban a hátsónál (km/h), az a
+  további különbség, amelynél az első hajtása nullára csökken (km/h), és a
+  visszaállás ideje (s). Szigorúbbhoz kisebb `tc-slip` és `tc-range`, lazábbhoz
+  nagyobb. A hátsó kerékbe a kipörgésgátló nem avatkozik bele.
 - `kick-speed`, `kick-release-speed`: a berúgás sebessége (3 km/h), és hogy ez
   alá lassulva mikor kell újra berúgni (1 km/h).
 - `p2-detect-throttle`, `p2-detect-hold`, `p2-detect-window`: a 2-es profil
