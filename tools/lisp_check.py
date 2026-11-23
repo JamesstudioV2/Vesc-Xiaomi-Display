@@ -9,6 +9,11 @@ It does not run the code. It checks:
   * the quoted names passed to conf-set/conf-get, gpio-*, event-enable
     are names the firmware actually knows.
 
+The symbol list is generated from the RELEASED 7.00 firmware (bldc commit
+26af694 "Release 7.00", 2026-05-15), not from the tip of the release_7_00
+branch: parameters added later (adc-tc, adc-v2-start, ...) make conf-get throw
+on the released firmware. Use them only through conf-try / conf-set-try.
+
 Usage:
   python3 tools/lisp_check.py lisp/*.lisp
   python3 tools/lisp_check.py --gen /path/to/bldc   # regenerate the symbol list

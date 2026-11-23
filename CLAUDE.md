@@ -56,6 +56,16 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   kijelző 2 s-ig a szöget mutatja; hiba: 61-es kód. `(celszog-torles)` -1-et ír. Az AB szál hajtja végre
   (`ab-save-req`). Fék + 2 = AB be/ki, 3 (fékkel is) = TC. AB IMU nélkül: 62-es kód. BNO085: `imu-source`
   mint a Balance ágon.
+- **Firmware alapvonal: a KIADOTT 7.00** (bldc 26af694 „Release 7.00”, 2026-05-15). A release_7_00 ág később kapott
+  paramétereket (`adc-v2-start/end` 2026-06-09, `adc-tc` 2026-06-13), ezekre a kiadott firmware `conf-get`-je
+  „Parameter not recognized” hibát dob, ami a hívó szálat leállítja. Ilyet csak `conf-try` / `conf-set-try`
+  (trap + alapérték) használhat. A `tools/fw7_00_symbols.txt` a kiadott 7.00-ból van generálva, a szimulátor
+  (`NEWER_PARAMS`) alapból a kiadottat utánozza, és UART-indítás nélkül nem enged UART-ot.
+- Indulás: `boot` = `init` (motorkimenet tiltás, féklámpa, pufferek, **kijelző UART + rx szál elsőként**) + `init-rest`
+  (ADC TC, gáz-kalibráció, mód, CAN), mindkettő `trap`-ben, hiba esetén `hiba-init...` a konzolon.
+  AB ágon: a fékkar kalibrációja (`adc-v2-*`) `conf-try`-jal, a kiadott firmware-en a gázkaré (`adc-v1-*`) a
+  tartalék (a fék + 2/5 kattintás küszöbe ebből számol); a célszög betöltése, az `ab-refresh` és az AB szál az
+  `init-rest` végén.
 - Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
 - Dual: a hátsó ADC app „Multiple VESCs over CAN”, az első vezérlőn `elso_vezerlo.lisp`, saját CAN SID protokoll (0x4D0 parancs, 0x4D1 ack).
 - Profilok: P1 (alap, „rendőr”) = csak hátsó motor, 3 km/h berúgás, ECO 6 km/h/100 W, S 25 km/h/500 W.
@@ -158,6 +168,14 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - 2026-11-18: `main` beolvasztva (lámpa 0x64, visszajelzés v2, 60-as hiba, kipörgésgátló 3 kattintással, BNO085
   meghajtó). Itt: két kipörgésgátló AB módban, fék + 5 kattintás célszög mentés (EEPROM), BNO085 az AB szöge,
   új kódok 60/61/62. 161 teszt átmegy.
+
+- 2026-11-23: Felhasználói jelzés: az új scriptekkel **a kijelző kommunikációja el sem indul** (main és AB is).
+  Ok: az új `init` a kijelző UART előtt `(conf-get 'adc-tc)`-t hívott; a kiadott 7.00-s firmware ezt nem ismeri
+  (2026-06-13-i commit), a hiba leállította az init-et (az AB/Balance ágakon az `adc-v2-*` ugyanígy, ezek ott már
+  korábban is ott voltak, így azok az ágak a felhasználó firmware-én soha nem indultak el). Javítva: `conf-try`,
+  `conf-set-try`, a kijelző UART elsőként indul, `boot` trap-pel; a szimbólumlista és a szimulátor a kiadott 7.00-t
+  követi; regressziós teszt (a régi script a szimulátorban 0 kijelzőválaszt ad, az új rendben). 94 teszt a main-en.
+  A VESC Tool-ban az ADC Traction Control legyen kikapcsolva (a kiadott firmware-en a script nem tudja).
 
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:

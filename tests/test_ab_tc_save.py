@@ -187,7 +187,7 @@ class TargetSaveTests(unittest.TestCase):
     def test_loaded_at_boot(self):
         r = new_rear()
         r.v.eeprom[10] = 18.5
-        r.i.call("init")
+        r.i.call("boot")
         self.assertAlmostEqual(r.g("ab-target-angle"), 18.5)
         self.assertEqual(r.g("ab-target-source"), "eeprom")
 
@@ -195,7 +195,7 @@ class TargetSaveTests(unittest.TestCase):
         for val in (-1.0, 80.0):
             r = new_rear()
             r.v.eeprom[10] = val
-            r.i.call("init")
+            r.i.call("boot")
             self.assertEqual(r.g("ab-target-angle"), 20.0)
             self.assertEqual(r.g("ab-target-source"), "kod")
 
@@ -206,7 +206,7 @@ class TargetSaveTests(unittest.TestCase):
         self.assertEqual(r.v.eeprom[10], -1.0)
         r2 = new_rear()
         r2.v.eeprom = dict(r.v.eeprom)
-        r2.i.call("init")
+        r2.i.call("boot")
         self.assertEqual(r2.g("ab-target-angle"), 20.0)
 
 
@@ -265,3 +265,20 @@ class AbBnoAndErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AbFirmwareCompatTests(unittest.TestCase):
+    def test_release_firmware_brake_threshold_from_throttle_calibration(self):
+        r = rear_p2()                           # kiadott 7.00: nincs adc-v2-* a Lispben
+        self.assertEqual(r.g("brk-start"), r.v.conf["adc-v1-start"])
+        self.assertEqual(r.g("brk-end"), r.v.conf["adc-v1-end"])
+        r.brk = FULL
+        clicks(r, 2)
+        self.assertTrue(r.g("ab-on"), "brake + 2 clicks still works")
+
+    def test_target_angle_loaded_and_ab_thread_ready_after_boot(self):
+        r = new_rear()
+        r.v.eeprom[10] = 21.0
+        r.i.call("boot")
+        self.assertAlmostEqual(r.g("ab-target-angle"), 21.0)
+        self.assertEqual(r.v.uart_started, (115200, "half-duplex"))

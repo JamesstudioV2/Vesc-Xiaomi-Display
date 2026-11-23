@@ -116,8 +116,17 @@ def num(x):
     return x
 
 
+# Paraméterek, amelyeket a kiadott 7.00-s firmware (Release 7.00, 2026-05-15)
+# még nem ismer: a release_7_00 ágra később kerültek (adc-v2-*: 2026-06-09,
+# adc-tc: 2026-06-13). A valódi firmware ezekre "Parameter not recognized"
+# hibát ad, ami a hívó szálat leállítja.
+NEWER_PARAMS = {"adc-tc", "adc-tc-max-diff", "adc-v1-center", "adc-v2-start", "adc-v2-end"}
+
+
 class Vesc:
-    """Mocked firmware state. Time is simulated, 10 kHz system ticks."""
+    """Mocked firmware state. Time is simulated, 10 kHz system ticks.
+
+    Alapból a kiadott 7.00-s firmware-t utánozza (newer_fw = False)."""
 
     TICKS = 10000
 
@@ -167,6 +176,8 @@ class Vesc:
         self.i2c_dev = None        # simulated I2C device (e.g. Bno085)
         self.eeprom = {}           # addr -> float (eeprom-store-f)
         self.eeprom_writes = 0
+        self.newer_fw = False      # t = a 2026 júniusa utáni 7.00 (ismeri a NEWER_PARAMS-ot)
+        self.fail_conf = set()     # ezekre a nevekre a conf-set hibát dob (hibainjektálás)
 
     def out(self, pin):
         """Level actually driven on the pin: only an output drives its ODR value."""
@@ -527,6 +538,8 @@ class Interp:
             return True
 
         def uart_read_bytes(buf, n, ofs):
+            if v.uart_started is None:
+                raise LispError("eval_error: uart-read-bytes: UART not started")
             if len(v.rx) < n:
                 raise Blocked()
             for k in range(n):
@@ -535,16 +548,28 @@ class Interp:
             return True
 
         def uart_write(buf):
+            if v.uart_started is None:
+                raise LispError("eval_error: uart-write: UART not started")
             v.tx.append(bytes(buf))
             return True
 
+        def known_param(name, what):
+            if name in NEWER_PARAMS and not v.newer_fw:
+                raise LispError("eval_error: %s: Parameter not recognized (%s, Release 7.00)" % (what, name))
+
         def conf_set(name, val):
             num(val)
+            known_param(name, "conf-set")
+            if name in v.fail_conf:
+                raise LispError("eval_error (injected): conf-set %s" % name)
+            if name not in v.conf:
+                raise LispError("conf-set: %s not mocked" % name)
             v.conf[name] = val
             v.conf_log.append((name, val))
             return True
 
         def conf_get(name):
+            known_param(name, "conf-get")
             if name not in v.conf:
                 raise LispError("conf-get: %s not mocked" % name)
             return v.conf[name]

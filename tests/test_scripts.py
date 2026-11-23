@@ -5,7 +5,7 @@ Run:  python3 -m unittest discover -s tests -v
 import os
 import unittest
 
-from lbm_sim import Interp, Blocked, xiaomi_frame, check_xiaomi_crc
+from lbm_sim import Interp, Blocked, Symbol, xiaomi_frame, check_xiaomi_crc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REAR = os.path.join(ROOT, "lisp", "hatso_vezerlo.lisp")
@@ -21,7 +21,7 @@ class Rear:
         self.i = Interp()
         self.v = self.i.vesc
         self.i.load(REAR)
-        self.i.call("init")
+        self.i.call("boot")
         self.v.tx.clear()
         self.thr = IDLE
         self.brk = IDLE
@@ -305,7 +305,7 @@ class ButtonTests(unittest.TestCase):
     def test_legacy_headlight_on_rear_adc2(self):
         r = Rear()
         r.i.set("headlight-on-front", None)
-        r.i.call("init")
+        r.i.call("boot")
         r.v.gpio_in["pin-rx"] = 1
         r.boot_p1()
         self.assertEqual(r.v.out("pin-adc2"), 0)
@@ -387,7 +387,7 @@ class ButtonTests(unittest.TestCase):
         r = Rear()
         r.i.set("button-pin", "pin-adc1")
         r.v.gpio_in["pin-adc1"] = 1
-        r.i.call("init")
+        r.i.call("boot")
         r.boot_p1()
         r.v.gpio_in["pin-adc1"] = 0
         r.step(4)
@@ -604,3 +604,52 @@ class StatusTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirmwareCompatTests(unittest.TestCase):
+    """A felhasználó a kiadott 7.00-s firmware-t használja (2026-05-15). Ami a
+    release_7_00 ágra később került (adc-tc, adc-v2-...), az ott ismeretlen,
+    és a conf-get hibát dob. Ez egyszer már leállította az init-et a kijelző
+    UART indítása előtt (a kijelző kommunikációja el sem indult)."""
+
+    def printed(self, r):
+        return " ".join(str(a) for p in r.v.printed for a in p)
+
+    def test_release_7_00_boots_and_answers_the_dash(self):
+        r = Rear()                       # alapból Release 7.00 viselkedés
+        self.assertFalse(r.v.newer_fw)
+        self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
+        self.assertNotIn("hiba-init", self.printed(r))
+        self.assertIn(("event-can-sid",), r.v.events, "CAN handler registered")
+        r.lever_frame(cmd=0x64)
+        self.assertEqual(len(r.v.tx), 1, "the dash gets an answer")
+        self.assertNotIn(("adc-tc", 0), r.v.conf_log)
+
+    def test_newer_firmware_switches_adc_tc_off(self):
+        i = Interp()
+        i.vesc.newer_fw = True
+        i.vesc.conf["adc-tc"] = 1
+        i.load(REAR)
+        i.call("boot")
+        self.assertEqual(i.vesc.conf["adc-tc"], 0)
+
+    def test_later_init_error_keeps_the_dash_alive(self):
+        i = Interp()
+        i.vesc.fail_conf = {"max-speed"}  # az init második része hibát dob
+        i.load(REAR)
+        i.call("boot")
+        text = " ".join(str(a) for p in i.vesc.printed for a in p)
+        self.assertIn("hiba-init-rest", text, "the error is shown on the console")
+        self.assertEqual(i.vesc.uart_started, (115200, "half-duplex"))
+        i.vesc.rx.extend(xiaomi_frame(0x20, 0x64, 0x00, [0x04, IDLE, IDLE, 0, 0]))
+        try:
+            i.call("rx-loop")
+        except Blocked:
+            pass
+        self.assertEqual(len(i.vesc.tx), 1, "the dash is still answered")
+
+    def test_conf_try_fallback(self):
+        r = Rear()
+        self.assertEqual(r.i.call("conf-try", Symbol("adc-tc"), 7), 7)
+        self.assertEqual(r.i.call("conf-try", Symbol("adc-v1-start"), 7), 0.8)
+        self.assertIsNone(r.i.call("conf-set-try", Symbol("adc-tc"), 0))
