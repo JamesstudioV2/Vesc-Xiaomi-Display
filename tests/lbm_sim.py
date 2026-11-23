@@ -141,6 +141,13 @@ def num(x):
 # még nem ismer: a release_7_00 ágra később kerültek (adc-v2-*: 2026-06-09,
 # adc-tc: 2026-06-13). A valódi firmware ezekre "Parameter not recognized"
 # hibát ad, ami a hívó szálat leállítja.
+# lispif_symbol_to_io (7.00): ezekre a lábnevekre működik a gpio-configure/-write/-read
+# (a hall4-6, adc3-4, hw-1/2 csak egyes lapokon van, a scriptek nem használják).
+GPIO_PINS = {"pin-rx", "pin-tx", "pin-swdio", "pin-swclk", "pin-hall1", "pin-hall2",
+             "pin-hall3", "pin-adc1", "pin-adc2", "pin-ppm"}
+GPIO_MODES = {"pin-mode-out", "pin-mode-od", "pin-mode-od-pu", "pin-mode-od-pd", "pin-mode-in",
+              "pin-mode-in-pu", "pin-mode-in-pd", "pin-mode-analog"}
+
 NEWER_PARAMS = {"adc-tc", "adc-tc-max-diff", "adc-v1-center", "adc-v2-start", "adc-v2-end"}
 
 
@@ -199,13 +206,29 @@ class Vesc:
         self.eeprom = {}           # addr -> float (eeprom-store-f)
         self.eeprom_writes = 0
         self.newer_fw = False      # t = a 2026 júniusa utáni 7.00 (ismeri a NEWER_PARAMS-ot)
+        self.od_pullup = set()     # lábak külső felhúzóval (nyitott drain módhoz, pl. 1k 5 V-ra)
+        self.gpio_short = set()    # lábak, amelyeket a külvilág GND-re húz (zárlatos gate)
         self.fail_conf = set()     # ezekre a nevekre a conf-set hibát dob (hibainjektálás)
 
     def out(self, pin):
-        """Level actually driven on the pin: only an output drives its ODR value."""
-        if self.gpio_mode.get(pin) != "pin-mode-out":
+        """Level actually on the pin when it is an output (None = not driven).
+        Push-pull drives its ODR value; open drain drives 0, and 1 only through
+        an external pull-up (od_pullup). A shorted pin (gpio_short) stays 0."""
+        mode = self.gpio_mode.get(pin)
+        if mode == "pin-mode-out":
+            lvl = self.gpio.get(pin)
+        elif mode in ("pin-mode-od", "pin-mode-od-pu", "pin-mode-od-pd"):
+            if self.gpio.get(pin, 0) == 0:
+                lvl = 0
+            elif pin in self.od_pullup or mode == "pin-mode-od-pu":
+                lvl = 1
+            else:
+                return None
+        else:
             return None
-        return self.gpio.get(pin)
+        if pin in self.gpio_short:
+            return 0
+        return lvl
 
     def app_restart(self):
         """App type or servo output changed in VESC Tool: app_adc_start() sets the
@@ -613,11 +636,20 @@ class Interp:
             v.can_tx.append((sid, bytes(data)))
             return True
 
+        def gpio_check(pin):
+            # lispif_symbol_to_io: ismeretlen láb -> eval error
+            if not isinstance(pin, Symbol) or str(pin) not in GPIO_PINS:
+                raise LispError("gpio: invalid pin %r" % (pin,))
+
         def gpio_configure(pin, mode):
+            gpio_check(pin)
+            if not isinstance(mode, Symbol) or str(mode) not in GPIO_MODES:
+                raise LispError("gpio-configure: invalid mode %r" % (mode,))
             v.gpio_mode[pin] = mode
             return True
 
         def gpio_write(pin, val):
+            gpio_check(pin)
             if pin not in v.gpio_mode:
                 raise LispError("gpio-write to %s which was never configured" % pin)
             v.gpio[pin] = need_int(val, 0, 1, "gpio-write")  # ODR, see Vesc.out()
@@ -632,9 +664,13 @@ class Interp:
             return True
 
         def gpio_read(pin):
+            gpio_check(pin)
             if pin in v.gpio_in:
                 return v.gpio_in[pin]
-            return v.gpio.get(pin, 0)
+            lvl = v.out(pin)
+            if lvl is None:   # nem hajtott láb: a gate lehúzó ellenállása 0-ra húzza
+                return 0
+            return lvl
 
         def set_current(amps, off_delay=None):
             v.motor_current = float(num(amps))
@@ -720,6 +756,7 @@ class Interp:
             "eeprom-store-f": eeprom_store_f, "eeprom-read-f": eeprom_read_f,
             "str-merge": lambda *a: LString("".join(a)),
             "str-from-n": str_from_n,
+            "sym2str": lambda sym: LString(str(sym)),
             "print": show,
             "systime": systime, "secs-since": secs_since, "sleep": sleep,
             "spawn": lambda *a: True,

@@ -447,8 +447,10 @@ class RearLampPinTests(unittest.TestCase):
         r.i.call("lampa-teszt")
         text = printed(r.v)
         self.assertIn("SWCLK", text)
-        self.assertIn("lampa BE -> lab 1", text)
-        self.assertIn("EREDMENY: a hatso vezerlo lampa laba rendben kapcsol", text)
+        self.assertIn("lampa BE -> lab 1, masik lab 1", text)
+        self.assertIn("EREDMENY: SWCLK rendben kapcsol, SWDIO rendben kapcsol", text)
+        self.assertIn("A vezerlo oldala jo", text)
+        self.assertIsNone(r.g("light"), "the original state is restored")
 
     def test_rear_lamp_test_pin_stuck_low(self):
         r = Rear()
@@ -464,3 +466,159 @@ class RearLampPinTests(unittest.TestCase):
         r.v.gpio_mode["pin-swclk"] = "pin-mode-in"
         r.step(int(0.6 / STEP))
         self.assertEqual(r.v.gpio_mode["pin-swclk"], "pin-mode-out")
+
+    def test_both_swd_pins_carry_the_lamp(self):
+        r = Rear()
+        r.boot_p1()
+        self.assertEqual(r.v.gpio_mode["pin-swclk"], "pin-mode-out")
+        self.assertEqual(r.v.gpio_mode["pin-swdio"], "pin-mode-out")
+        self.assertEqual((r.v.out("pin-swclk"), r.v.out("pin-swdio")), (0, 0))
+        r.i.set("light", True)
+        r.step(1)
+        self.assertEqual((r.v.out("pin-swclk"), r.v.out("pin-swdio")), (1, 1))
+        r.i.set("light", None)
+        r.step(1)
+        self.assertEqual((r.v.out("pin-swclk"), r.v.out("pin-swdio")), (0, 0))
+
+    def test_second_pin_can_be_disabled(self):
+        r = Rear()                       # (a konstruktor már az alapértékkel indította)
+        r.i.set("headlight-pin2", None)
+        r.v.gpio_mode.pop("pin-swdio")
+        r.i.call("boot")
+        r.boot_p1()
+        r.i.set("light", True)
+        r.step(int(0.6 / STEP))
+        self.assertEqual(r.v.out("pin-swclk"), 1)
+        self.assertNotIn("pin-swdio", r.v.gpio_mode)
+
+    def test_lamp_on_swdio_only_still_found(self):
+        """A vezeték valójában az SWDIO-n van, az SWCLK-t (pl. zárlat) 0-n tartja valami."""
+        r = Rear()
+        r.boot_p1()
+        r.v.gpio_short.add("pin-swclk")
+        self.cosim_rear(r)
+        r.i.call("lampa-teszt")
+        text = printed(r.v)
+        self.assertIn("EREDMENY: SWCLK bekapcsolva sem megy magasra, SWDIO rendben kapcsol", text)
+        self.assertIn("A vezerlo oldala jo", text)
+
+    def test_lamp_test_beeps_at_each_on(self):
+        r = Rear()
+        r.boot_p1()
+        self.cosim_rear(r)
+        start = len(r.v.tx)
+        r.i.call("lampa-teszt")
+        beeps = sum(1 for f in r.v.tx[start:] if f[9] == 1)
+        self.assertEqual(beeps, 6)
+        lights = [f[8] for f in r.v.tx[start:]]
+        self.assertIn(100, lights, "the dash lamp blinks with it")
+        self.assertIn(0, lights)
+
+    def test_open_drain_with_pullup(self):
+        r = Rear()
+        r.i.set("headlight-mode", __import__("lbm_sim").Symbol("pin-mode-od"))
+        r.i.call("boot")
+        r.v.od_pullup.update({"pin-swclk", "pin-swdio"})
+        r.boot_p1()
+        self.assertEqual(r.v.gpio_mode["pin-swclk"], "pin-mode-od")
+        r.i.set("light", True)
+        r.step(1)
+        self.assertEqual(r.v.out("pin-swclk"), 1, "released, the 5 V pull-up lifts it")
+        r.i.set("light", None)
+        r.step(1)
+        self.assertEqual(r.v.out("pin-swclk"), 0)
+
+    def test_open_drain_without_pullup_is_reported(self):
+        r = Rear()
+        r.i.set("headlight-mode", __import__("lbm_sim").Symbol("pin-mode-od"))
+        r.i.call("boot")
+        r.boot_p1()
+        self.cosim_rear(r)
+        r.i.call("lampa-teszt")
+        text = printed(r.v)
+        self.assertIn("bekapcsolva sem megy magasra", text)
+        self.assertIn("Nyitott drain modban", text)
+
+
+class TcIconTests(unittest.TestCase):
+    """Bekapcsolt kipörgésgátló (2-es profil): Bluetooth ikon bit a kijelzőnek."""
+
+    def p2(self):
+        r = Rear()
+        r.boot_p2()
+        r.thr = IDLE
+        r.step(int(0.5 / STEP))
+        self.assertEqual(r.g("profile"), 2)
+        return r
+
+    def test_icon_when_tc_on_in_p2(self):
+        r = self.p2()
+        self.assertTrue(r.g("tc-on"))
+        self.assertEqual(r.last_dash()[8], 2, "lamp off, TC icon bit")
+        r.i.set("light", True)
+        self.assertEqual(r.last_dash()[8], 102, "lamp value + TC icon bit")
+
+    def test_icon_follows_the_3_click_toggle(self):
+        r = self.p2()
+        r.i.call("tc-toggle")
+        self.assertIsNone(r.g("tc-on"))
+        self.assertEqual(r.last_dash()[8], 0)
+        r.i.call("tc-toggle")
+        self.assertEqual(r.last_dash()[8], 2)
+
+    def test_no_icon_in_p1(self):
+        r = Rear()
+        r.boot_p1()
+        self.assertTrue(r.g("tc-on"))
+        f = r.last_dash()
+        self.assertEqual(f[8], 0)
+        self.assertEqual(f[6], 1)
+
+    def test_icon_field_and_bit_configurable(self):
+        r = self.p2()
+        r.i.set("tc-icon-field", 0)
+        r.i.set("tc-icon-bit", 8)
+        f = r.last_dash()
+        self.assertEqual(f[6], 1 + 8, "D mode + bit 8 in the mode byte")
+        self.assertEqual(f[8], 0)
+        r.i.set("tc-icon-field", -1)
+        f = r.last_dash()
+        self.assertEqual((f[6], f[8]), (1, 0), "-1 = no indicator")
+
+
+class IconTestTests(unittest.TestCase):
+    """(ikon-teszt): lépésenként egy érték a kijelzőnek, a lépés száma a sebesség helyén."""
+
+    def run_test(self, r):
+        seen = []
+
+        def sleep(secs):
+            seen.append(bytes(r.last_dash()))
+            r.step(1)
+            return True
+        r.i.builtins["sleep"] = sleep
+        r.i.call("ikon-teszt")
+        return seen
+
+    def test_steps(self):
+        r = Rear()
+        r.boot_p1()
+        seen = self.run_test(r)
+        self.assertEqual(len(seen), 14)
+        self.assertEqual([f[10] for f in seen], list(range(1, 15)), "step number as the speed")
+        self.assertEqual([f[8] for f in seen[:10]], [1, 2, 4, 8, 16, 32, 64, 128, 100, 255])
+        self.assertEqual([f[6] for f in seen[10:]], [1 + 8, 1 + 32, 1 + 64, 1 + 128],
+                         "mode bits are added to the D mode")
+        self.assertEqual(r.g("dash-test-field"), -1)
+        f = r.last_dash()
+        self.assertEqual((f[6], f[8], f[10]), (1, 0, 0), "back to normal")
+        self.assertIn("BT ikon: tc-icon-field 2, tc-icon-bit 2", printed(r.v))
+
+    def test_tc_icon_suppressed_during_test(self):
+        r = Rear()
+        r.boot_p2()
+        r.thr = IDLE
+        r.step(int(0.5 / STEP))
+        seen = self.run_test(r)
+        self.assertEqual([f[8] for f in seen[10:]], [0, 0, 0, 0], "no TC bit while testing")
+        self.assertEqual(r.last_dash()[8], 2, "TC icon back after the test")

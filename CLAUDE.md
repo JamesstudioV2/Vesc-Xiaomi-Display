@@ -20,12 +20,23 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - Bluetooth: a kijelző BLE-je **nem** használható VESC Tool-hoz. Javaslat: VESC Express a CAN-en (kész modul, vagy
   DIY ESP32-S3 + SN65HVD230, a `S3 N16R8` / `S3 FH4R2` target CAN-je GPIO16 TX / GPIO17 RX). README: „Bluetooth (VESC Tool)”.
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
-- Első lámpa: az **első vezérlő PPM lábán** → N-FET (`headlight-on-front` t). A hátsó a CAN parancs flags 2-es
-  bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad). A hátsó ADC2-n
-  nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet védő/szűrő köre a lapon).
-  `headlight-on-front nil` = régi ADC2-es mód. Minden ágon (main, Balance, Advanced-Balance).
+- Első (külső) lámpa: **a hátsó vezérlő SWD csatlakozójának SWCLK lábán** → N-FET (2026-11-23, a felhasználó kérése:
+  `headlight-on-front nil`, `headlight-pin 'pin-swclk`; az SWCLK-t a processzor induláskor lehúzza, így bootoláskor
+  nem villan fel). 2026-11-23 (5): ugyanaz a jel az **SWDIO**-n is (`headlight-pin2 'pin-swdio`, nil = ki), mert a
+  felhasználónál az SWCLK-ra kötve sem ment; `headlight-mode` `'pin-mode-out` (alap) vagy `'pin-mode-od` (1 kΩ 5V-ra,
+  5 V-os gate; PA13/PA14 5 V-tűrő). Előtte: hátsó ADC2 (nem működött, az ADC bemenet védőköre), majd az első vezérlő PPM lába (nem
+  működött, valószínű nyáksérülés). Opció: `headlight-on-front t` = az első PPM lábán, CAN flags bit2, az első
+  `light-pin`. A `'pin-ppm` a 75_100_V2 / MKSESC V2 lapokon PB6 (TIM4 CH1). Minden ágon.
 - Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
   lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
+  A 0x64 a gyári vezérlő értéke (camcamfresh, Arduino-fórum: „0x64 = on”); a Koxx3 SmartESC m365 0/1-et küld.
+  A kijelző lámpája a kijelző tápjáról (VESC 5V) ég (gyári M365-ön ~4,1 V jön fel). A felhasználónál 100-zal
+  sem ég (2026-11-23): `(ikon-teszt)` 7. (64) / 9. (100) lépés, ha egyiknél sem: táp / lámpa bekötés.
+- Kipörgésgátló jelzése: bekapcsolt TC-nél (2-es profil) a **Bluetooth ikon** (a felhasználó kérése, 2026-11-23).
+  A BT ikon bitje sehol nincs dokumentálva (a gyári kijelzőn a saját BLE modulja kapcsolja), ezért konfigurálható:
+  `tc-icon-field` (alap 2 = lámpa mező) + `tc-icon-bit` (alap 2) = **becslés**. `(ikon-teszt)`: 14 lépés, 3 s,
+  a lépés száma a sebesség helyén: lámpa mező 1,2,4,…,128,100,255 (csere), mód mező +8,+32,+64,+128 (hozzáadva);
+  teszt közben a TC jelzés szünetel.
 - CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
   bit1 BNO friss, bit2 lámpa láb visszaolvasva), script-verzió (2), első sebesség (i16, 0,1 km/h). A hátsó
   `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)` mindkét
@@ -104,7 +115,9 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - Lekapcsolás (motorok elengednek, AB ki, gázzár a felengedésig): roll > 60°, szög > 60° (hátra) vagy < −60°
   (előre, a felhasználó csak oldalra/hátra kérte, de baleset esetén ez is), nincs IMU adat. Sebességkorlát NINCS.
   Nincs kijelzőkeret → nincs gáz/fék, de az AB bekapcsolva marad.
-- Az `(ikon-teszt)` végigkapcsolja a jelölt biteket (elsőként a lakatot), ha a kijelzőn mást kellene választani.
+- Az `(ikon-teszt)` (2026-11-23 óta a main 14 lépéses változata, a lépés száma a sebesség helyén) végigkapcsolja a
+  jelölt értékeket (a 12. lépés a lakat), ha a kijelzőn mást kellene választani. Teszt közben a lakat és a
+  Bluetooth (TC) jelzés szünetel. A lakat (mód bit 32) és a TC Bluetooth jelzése (lámpa mező bit 2) együtt is megy.
 - Felfedezett eltérés (még nincs javítva egyik ágon sem): a lucidnx mérései szerint a lámpa mező a gyári
   vezérlőtől 0x64 (6-os bit), a mi kódunk 1-et küld; a D módot a gyári 0-val jelzi, mi 1-gyel. Visszajelzés kell.
 - Modell (`tools/balansz_modell.py`): Kp 10 / Kd 1,5 / 1000 A/s mellett 0,3–1,2 Nm/A-nél megfogja a teljes gázos
@@ -201,9 +214,20 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   kereket korlátozza. Itt ezen felül az AB-kipörgésgátló is csak az elsőt fogja, és az AB az egyetlen BNO085-tel
   (első COM1) működik, diagnosztikával (ld. fent). 189 teszt.
 
+- 2026-11-23 (5): Felhasználói jelzés: SWCLK-ra kötve sem ég a külső lámpa (a MOSFET modult kipróbálta, jó), és a
+  kijelző lámpája sem. Újra átnézve: a kiadott 7.00 `gpio-configure` közvetlen `palSetPadMode(GPIOA, 14)`, a script
+  logikája rendben, a 75_100 hwconf nem használja a PA13/PA14-et. Három különböző láb (ADC2, első PPM, SWCLK) is
+  hibás volt, ami közös (hardveres) okra utal: 3,3 V-tal ki nem nyitó MOSFET, rossz csatlakozóláb, GND. Ezért:
+  jel mindkét SWD lábon, nyitott drain opció, `(lampa-teszt)` 6x 2 s + sípolás + mindkét láb + részletes EREDMENY,
+  `(ikon-teszt)` (kijelző lámpa érték és BT ikon keresése), Bluetooth ikon = TC jelzés. A szimulátor a firmware
+  lábneveit/módjait ellenőrzi, nyitott drain + felhúzó + zárlat modell, `sym2str`. 120 teszt a main-en, 203 az
+  Advanced-Balance ágon (a régi AB ikon-teszt helyett az új; az AB lakat és a BT ikon együtt).
+
 ## Következő lépések
-1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
-   `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+1. Lámpa: a hátsó `(lampa-teszt)` `EREDMENY:` sora, a gate–GND mért feszültség, és a csere-próba (a lámpa MOSFET
+   jelvezetéke a PPM lábra: ha ott ég, a modul jó és a SWD bekötés a hibás). Kijelző lámpa és BT ikon:
+   `(ikon-teszt)` — melyik lépésnél gyullad ki a lámpa, illetve a Bluetooth ikon (-> `dash-light-value`,
+   `tc-icon-field`/`tc-icon-bit`). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
    BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
    `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
    AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.

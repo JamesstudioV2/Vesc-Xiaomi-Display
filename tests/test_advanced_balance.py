@@ -402,8 +402,36 @@ class IconTests(unittest.TestCase):
     def test_ikon_teszt(self):
         r = rear_p2()
         r.i.call("ikon-teszt")
-        self.assertEqual(r.g("icon-test-field"), -1)
-        self.assertGreaterEqual(len(r.v.printed), 12)
+        self.assertEqual(r.g("dash-test-field"), -1)
+        self.assertEqual(r.g("dash-test-step"), -1)
+        self.assertGreaterEqual(len(r.v.printed), 14)
+
+    def test_lock_and_bluetooth_icons_together(self):
+        r = ab_on()
+        self.assertTrue(r.g("tc-on"))
+        f = r.last_dash()
+        self.assertEqual(f[6] & 32, 32, "AB: lock icon")
+        self.assertEqual(f[8] & 2, 2, "TC on: Bluetooth icon bit")
+        r.i.call("tc-toggle")
+        f = r.last_dash()
+        self.assertEqual(f[6] & 32, 32)
+        self.assertEqual(f[8] & 2, 0, "TC off: no Bluetooth icon bit")
+
+    def test_icons_suppressed_during_ikon_teszt(self):
+        r = ab_on()
+        seen = []
+
+        def sleep(secs):
+            seen.append(bytes(r.last_dash()))
+            return True
+        r.i.builtins["sleep"] = sleep
+        r.i.call("ikon-teszt")
+        self.assertEqual(len(seen), 14)
+        self.assertEqual(seen[0][6] & 32, 0, "no lock icon while testing the light field")
+        self.assertEqual(seen[0][8], 1, "light field replaced by the test value")
+        self.assertEqual(seen[11][6] & 32, 32, "step 12 = the lock bit")
+        f = r.last_dash()
+        self.assertEqual((f[6] & 32, f[8] & 2), (32, 2), "both icons back after the test")
 
 
 class ClosedLoopTests(unittest.TestCase):
