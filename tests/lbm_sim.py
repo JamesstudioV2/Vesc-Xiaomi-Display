@@ -166,6 +166,7 @@ class Vesc:
             "l-current-max": 60.0, "l-current-min": -60.0,
             "adc-ramp-time-pos": 0.3, "adc-ramp-time-neg": 0.1, "adc-thr-hyst": 0.0,
             "adc-tc": 0, "adc-tc-max-diff": 3000.0,
+            "app-to-use": 0,
         }
         self.conf_log = []
         self.gpio_mode = {"pin-rx": "uart-af", "pin-tx": "uart-af"}

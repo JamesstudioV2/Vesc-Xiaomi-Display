@@ -334,3 +334,81 @@ class TractionSetupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def printed(v):
+    return " ".join(str(a) for p in v.printed for a in p)
+
+
+class LampDiagnosisTests(unittest.TestCase):
+    """A két (lampa-teszt) a végén kiírja, mire lehet következtetni."""
+
+    def front(self):
+        f = Interp()
+        f.load(FRONT)
+        f.call("init")
+        return f
+
+    def test_front_healthy_pin(self):
+        f = self.front()
+        f.call("lampa-teszt")
+        self.assertIn("EREDMENY: a vezerlo laba rendben kapcsol", printed(f.vesc))
+        self.assertIn("App to Use: 0", printed(f.vesc))
+
+    def test_front_pin_stuck_low(self):
+        f = self.front()
+        f.vesc.gpio_in["pin-ppm"] = 0       # zárlatos gate vagy sérült láb: mindig 0
+        f.call("lampa-teszt")
+        self.assertIn("bekapcsolva sem megy magasra", printed(f.vesc))
+
+    def test_front_warns_about_ppm_app(self):
+        f = self.front()
+        f.vesc.conf["app-to-use"] = 1
+        f.call("lampa-teszt")
+        self.assertIn("PPM app fut", printed(f.vesc))
+
+    def cosim(self, L, pump=True):
+        """A teszt alatti alvás közben a két vezérlő valóban fut és kommunikál."""
+        def sleep(secs):
+            for _ in range(max(1, int(round(secs / STEP)))):
+                if pump:
+                    L.step(1)
+                else:
+                    L.r.step(1)
+            return True
+        L.r.i.builtins["sleep"] = sleep
+
+    def test_rear_verdict_healthy(self):
+        L = Link(p2=False)
+        self.cosim(L)
+        L.r.i.call("lampa-teszt")
+        text = printed(L.r.v)
+        self.assertIn("Elso script verzio: 2 (rendben)", text)
+        self.assertIn("parancs BE, lab 1", text)
+        self.assertIn("EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol", text)
+        self.assertIsNone(L.r.g("light"), "the original state is restored")
+
+    def test_rear_verdict_front_pin_stuck_low(self):
+        L = Link(p2=False)
+        L.fv.gpio_in["pin-ppm"] = 0
+        self.cosim(L)
+        L.r.i.call("lampa-teszt")
+        self.assertIn("nem megy magasra", printed(L.r.v))
+
+    def test_rear_verdict_front_silent(self):
+        L = Link(p2=False)
+        self.cosim(L, pump=False)
+        L.r.v.now += 2.0
+        L.r.i.call("lampa-teszt")
+        self.assertIn("EREDMENY: az elso vezerlo nem koveti", printed(L.r.v))
+
+    def test_headlight_on_rear_swd_pin(self):
+        r = Rear()
+        r.i.set("headlight-on-front", None)
+        r.i.set("headlight-pin", __import__("lbm_sim").Symbol("pin-swdio"))
+        r.i.call("boot")
+        r.boot_p1()
+        r.i.set("light", True)
+        r.step(2)
+        self.assertEqual(r.v.out("pin-swdio"), 1)
+        self.assertNotIn("pin-adc2", r.v.gpio_mode)
