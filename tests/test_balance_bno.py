@@ -59,7 +59,7 @@ class BnoSourceTests(unittest.TestCase):
         r.i.call("read-imu")
         self.assertAlmostEqual(r.g("bal-angle"), 10.5)
         self.assertAlmostEqual(r.g("bal-roll"), 1.0)
-        self.assertAlmostEqual(r.g("bal-ext-rate"), 50.0, msg="0.5 deg per 10 ms sample")
+        self.assertAlmostEqual(r.g("bal-imu-rate"), 50.0, msg="0.5 deg per 10 ms sample")
         self.assertTrue(r.g("bal-imu-ok"))
 
     def test_missed_sample_counts(self):
@@ -67,7 +67,7 @@ class BnoSourceTests(unittest.TestCase):
         r.i.call("on-imu-frame", imu_frame(0.0, 10.0, 7))
         r.i.call("on-imu-frame", imu_frame(0.0, 11.0, 9))   # a 8-as elveszett
         r.i.call("read-imu")
-        self.assertAlmostEqual(r.g("bal-ext-rate"), 50.0)
+        self.assertAlmostEqual(r.g("bal-imu-rate"), 50.0)
 
     def test_invert_offset_and_axis(self):
         r = Rear()
@@ -79,7 +79,7 @@ class BnoSourceTests(unittest.TestCase):
         r.i.call("read-imu")
         self.assertAlmostEqual(r.g("bal-angle"), 17.0)
         self.assertAlmostEqual(r.g("bal-roll"), 3.0)
-        self.assertAlmostEqual(r.g("bal-ext-rate"), 100.0)
+        self.assertAlmostEqual(r.g("bal-imu-rate"), 100.0)
 
     def test_invalid_status_ignored(self):
         r = Rear()
