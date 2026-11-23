@@ -265,12 +265,12 @@
 (def ab-show-time nil)         ; mentés után a kijelző a szöget mutatja
 (def ab-show-value 0)
 (def ab-target-source 'kod)    ; honnan jön a célszög: 'kod vagy 'eeprom
-(def ext-roll 0.0)             ; BNO085 (első vezérlő): fok
-(def ext-pitch 0.0)
-(def ext-rate 0.0)             ; fok/s a balance-axis tengelyen, a mintákból
-(def ext-cnt -1)               ; az utolsó minta sorszáma
-(def ext-time 0)
-(def bal-ext-rate 0.0)
+(def imu-roll 0.0)             ; BNO085 (első vezérlő): fok
+(def imu-pitch 0.0)
+(def imu-rate 0.0)             ; fok/s a balance-axis tengelyen, a mintákból
+(def imu-cnt -1)               ; az utolsó minta sorszáma
+(def imu-time 0)
+(def bal-imu-rate 0.0)
 (def last-beep 0)
 (def front-version 0)          ; az első script verziója (a visszajelzésből), 0 = még nincs
 (def front-old nil)            ; t = az első script régebbi, mint front-min-version
@@ -401,15 +401,15 @@
             (var roll (/ (bufget-i16 data 0) 100.0))
             (var pitch (/ (bufget-i16 data 2) 100.0))
             (var cnt (bufget-u8 data 7))
-            (var dn (bitwise-and (- cnt ext-cnt) 255))
-            (if (and (>= ext-cnt 0) (> dn 0) (< dn 10) (< (secs-since ext-time) 0.2))
-                (setq ext-rate (/ (- (if (= balance-axis 0) roll pitch)
-                            (if (= balance-axis 0) ext-roll ext-pitch))
+            (var dn (bitwise-and (- cnt imu-cnt) 255))
+            (if (and (>= imu-cnt 0) (> dn 0) (< dn 10) (< (secs-since imu-time) 0.2))
+                (setq imu-rate (/ (- (if (= balance-axis 0) roll pitch)
+                            (if (= balance-axis 0) imu-roll imu-pitch))
                         (* dn imu-period))))
-            (setq ext-roll roll)
-            (setq ext-pitch pitch)
-            (setq ext-cnt cnt)
-            (setq ext-time (systime))
+            (setq imu-roll roll)
+            (setq imu-pitch pitch)
+            (setq imu-cnt cnt)
+            (setq imu-time (systime))
 }))
 
 (defun can-event-loop ()
@@ -756,11 +756,11 @@
 (defun read-imu ()
     (if (eq imu-source 'bno085)
         { ; az első vezérlő BNO085-je: 0,1 s-nál régebbi adat = nincs IMU
-            (var raw (if (= balance-axis 0) ext-roll ext-pitch))
-            (setq bal-roll (if (= balance-axis 0) ext-pitch ext-roll))
+            (var raw (if (= balance-axis 0) imu-roll imu-pitch))
+            (setq bal-roll (if (= balance-axis 0) imu-pitch imu-roll))
             (setq bal-angle (- (if balance-invert (- 0.0 raw) raw) balance-level-offset))
-            (setq bal-ext-rate (if balance-invert (- 0.0 ext-rate) ext-rate))
-            (setq bal-imu-ok (< (secs-since ext-time) 0.1))
+            (setq bal-imu-rate (if balance-invert (- 0.0 imu-rate) imu-rate))
+            (setq bal-imu-ok (< (secs-since imu-time) 0.1))
         }
         {
             (var rpy (get-imu-rpy))
@@ -775,7 +775,7 @@
 )
 
 (defun update-rate (dt) {
-        (var raw-rate (if (eq imu-source 'bno085) bal-ext-rate (/ (- bal-angle bal-prev-angle) dt)))
+        (var raw-rate (if (eq imu-source 'bno085) bal-imu-rate (/ (- bal-angle bal-prev-angle) dt)))
         (setq bal-rate (+ bal-rate (* 0.3 (- raw-rate bal-rate))))
         (setq bal-prev-angle bal-angle)
 })
@@ -1020,8 +1020,8 @@
                 (if (eq ab-target-source 'eeprom) " (mentett)" " (kodbol)")))
         (looprange i 0 25 {
                 (var rpy (get-imu-rpy))
-                (var r (if (eq imu-source 'bno085) ext-roll (rad2deg (ix rpy 0))))
-                (var p (if (eq imu-source 'bno085) ext-pitch (rad2deg (ix rpy 1))))
+                (var r (if (eq imu-source 'bno085) imu-roll (rad2deg (ix rpy 0))))
+                (var p (if (eq imu-source 'bno085) imu-pitch (rad2deg (ix rpy 1))))
                 (print (str-merge "roll " (str-from-n r "%.1f")
                         "  pitch " (str-from-n p "%.1f")
                         "  -> szog " (str-from-n bal-angle "%.1f")
@@ -1131,7 +1131,7 @@
         ((= code 14) "gazkar jele hibas (szakadas vagy zarlat)")
         ((= code 15) "fekkar jele hibas (szakadas vagy zarlat)")
         ((= code 16) "gaz- es fekkar egyszerre hibas (kozos tap/GND, kabel)")
-        ((= code 18) "motor enkoder / poziciószenzor hiba")
+        ((= code 18) "motor enkoder / pozicioszenzor hiba")
         ((= code 24) "akkufeszultseg tul magas vagy tul alacsony")
         ((= code 26) "flash vagy konfiguracio serult")
         ((= code 28) "kapuvezerlo (DRV) / MOSFET hiba")
