@@ -19,7 +19,8 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 - Első lámpa: az **első vezérlő PPM lábán** → N-FET (`headlight-on-front` t). A hátsó a CAN parancs flags 2-es
   bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad). A hátsó ADC2-n
   nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet védő/szűrő köre a lapon).
-  `headlight-on-front nil` = régi ADC2-es mód. Minden ágon (main, Balance, Advanced-Balance).
+  `headlight-on-front nil` = a hátsó vezérlő `headlight-pin` lábán (alap `'pin-adc2`, tartalék `'pin-swdio`).
+  Minden ágon (main, Balance, Advanced-Balance). A `'pin-ppm` a 75_100_V2 / MKSESC V2 lapokon PB6 (TIM4 CH1).
 - Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
   lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
 - CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
@@ -134,9 +135,15 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   A main-en nem volt ilyen név. Az ellenőrző és a szimulátor kiegészítve; a régi scriptek a szimulátorban
   ugyanazzal a hibával állnak meg, mint a valódi firmware-en.
 
+- 2026-11-23 (3): A kijelző működik, a külső lámpa továbbra sem; a felhasználó nyáksérülést sem zár ki.
+  Kód átnézve: az útvonal helyes, az első PPM láb ugyanaz (PB6), mint a hátsón a működő féklámpáé, a
+  `gpio-configure` közvetlen `palSetPadMode`. Mindkét `(lampa-teszt)` most `EREDMENY:` sort ír (az első az App
+  to Use-t is), a README mérési táblázatot kapott (PPM jel láb feszültsége), tartalék láb: első `light-pin
+  'pin-swdio`, vagy hátsó `headlight-on-front nil` + `headlight-pin 'pin-swdio`. 103 teszt a main-en.
+
 ## Következő lépések
-1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
-   `(lampa-teszt)` kimenete a hátsón és az elsőn. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+1. Lámpa: a két `(lampa-teszt)` kimenete (`EREDMENY:` sorok) és a PPM jel láb mért feszültsége kell; ebből
+   dől el, hogy a láb, a nyák vagy a MOSFET/bekötés a hibás. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
    BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
    `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
    AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
