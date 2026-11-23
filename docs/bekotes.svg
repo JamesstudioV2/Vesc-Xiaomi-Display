@@ -49,10 +49,9 @@
   <text x="282" y="290" text-anchor="end" font-size="12">470 Ω</text>
   <text x="282" y="305" text-anchor="end" font-size="12">felhúzó</text>
 
-  <!-- első lámpa fokozat: a gate az ELSŐ vezérlő PPM jelére megy (nem a hátsóra!) -->
-  <circle cx="545" cy="120" r="5" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
-  <line x1="550" y1="120" x2="650" y2="120" stroke="#1565c0" stroke-width="3"/>
-  <text x="535" y="88" font-size="11" font-weight="bold" fill="#1565c0">← az ELSŐ VESC PPM jele</text>
+  <!-- első lámpa fokozat: a gate a HÁTSÓ vezérlő SWD csatlakozójának SWCLK lábán -->
+  <text x="510" y="125" text-anchor="end" font-weight="bold" fill="#1565c0">SWD: SWCLK →</text>
+  <line x1="520" y1="120" x2="650" y2="120" stroke="#1565c0" stroke-width="3"/>
   <circle cx="600" cy="120" r="4" fill="#212121"/>
   <line x1="600" y1="120" x2="600" y2="138" stroke="#212121" stroke-width="2"/>
   <polyline points="600,138 592,141 608,147 592,153 608,159 600,162" fill="none" stroke="#212121" stroke-width="2"/>
@@ -68,7 +67,7 @@
   <line x1="700" y1="31" x2="700" y2="16" stroke="#212121" stroke-width="2"/>
   <text x="710" y="20" font-size="12">+ lámpa táp</text>
   <text x="722" y="50" font-weight="bold">Első lámpa</text>
-  <text x="722" y="68" font-size="12">(az első VESC PPM lábán)</text>
+  <text x="722" y="68" font-size="12">(a hátsó VESC SWD / SWCLK lábán)</text>
   <line x1="700" y1="145" x2="700" y2="165" stroke="#212121" stroke-width="2"/>
   <use href="#gnd" x="700" y="165"/>
 
@@ -104,7 +103,6 @@
   <rect x="790" y="495" width="150" height="55" rx="10" fill="#f3e5f5" stroke="#424242" stroke-width="2"/>
   <text x="865" y="518" text-anchor="middle" font-weight="bold">Első VESC</text>
   <text x="865" y="538" text-anchor="middle" font-size="12">elso_vezerlo.lisp</text>
-  <text x="782" y="548" text-anchor="end" font-size="11" font-weight="bold" fill="#1565c0">PPM jel → első lámpa N-FET gate</text>
 
   <!-- BNO085 az első vezérlő COMM portján (opcionális, a balansz ágak használják) -->
   <rect x="790" y="390" width="150" height="76" rx="8" fill="#e8f5e9" stroke="#424242" stroke-width="2" stroke-dasharray="6 4"/>

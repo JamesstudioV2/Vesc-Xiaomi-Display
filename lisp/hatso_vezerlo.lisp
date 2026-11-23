@@ -9,8 +9,8 @@
 ;    (App Settings -> ADC) hangolhatók.
 ;  - Kijelző gomb a kijelző zöld vezetékén, a COMM port RX lábán (felhúzó
 ;    ellenállás 3.3V-ra, lenyomva a kijelző GND-re húzza):
-;      1x nyomás = lámpa: a kijelző saját lámpája + az első vezérlő PPM lábán
-;                  lévő külső lámpa (MOSFET)
+;      1x nyomás = lámpa: a kijelző saját lámpája + a hátsó vezérlő SWD
+;                  csatlakozójának SWCLK lábán lévő külső lámpa (MOSFET)
 ;      2x nyomás = módváltás  D -> S -> ECO -> D
 ;      3x nyomás = kipörgésgátló be/ki (csak 2-es profilban), 3 sípolás
 ;  - PPM láb: féklámpa MOSFET. Alapból folyamatosan világít, fékezéskor villog.
@@ -19,8 +19,9 @@
 ;    3 km/h-s berúgás kell az induláshoz.
 ;  - 2-es profil: bekapcsoláskor nyomva tartott gázkarral. Mindkét motor megy,
 ;    nincs berúgás, álló helyzetben a kijelző az akku %-ot mutatja.
-;    Kipörgésgátló: ha az egyik kerék a megengedettnél gyorsabban forog, mint
-;    a másik, annak a hajtását csökkenti (induláskor bekapcsolva).
+;    Kipörgésgátló: ha az első kerék a megengedettnél gyorsabban forog, mint a
+;    hátsó, az első hajtását csökkenti; a hátsóba nem avatkozik bele
+;    (induláskor bekapcsolva).
 ;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (tc-teszt)
 ;
 ; Bekötés (COMM port):
@@ -29,8 +30,8 @@
 ;   kijelző zöld (gomb) -> RX + 470 Ohm felhúzó ellenállás 3.3V-ra
 ;   PPM jel -> féklámpa MOSFET gate
 ;   ADC1, ADC2 -> szabad (10 kOhm-mal GND-re ajánlott)
-;   Első lámpa: az ELSŐ vezérlő PPM lábán (MOSFET gate), CAN-en kapcsolva
-;   (headlight-on-front). nil esetén a hátsó vezérlő headlight-pin lábán.
+;   Külső lámpa: a hátsó vezérlő SWD csatlakozójának SWCLK lábán (MOSFET gate,
+;   headlight-pin). headlight-on-front t esetén az első vezérlő PPM lábán (CAN).
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
 ; Részletes leírás és VESC Tool beállítások: README.md
@@ -50,21 +51,23 @@
 
 (def boot-mode 1)             ; induló mód: 1 = D, 2 = ECO, 4 = S
 (def light-default nil)       ; első lámpa induláskor: t = be, nil = ki
-(def headlight-on-front t)    ; t = a lámpa MOSFET az első vezérlő PPM lábán (CAN-en kapcsolva),
-                              ; nil = a hátsó vezérlő headlight-pin lábán
-(def headlight-pin 'pin-adc2) ; ha headlight-on-front nil: a hátsó vezérlő lámpa lába. Az ADC2
-                              ; sok lapon a védőellenállások miatt nem tud MOSFET-et kapcsolni;
-                              ; 'pin-swdio / 'pin-swclk: az SWD csatlakozó, közvetlen MCU láb
-                              ; (utána az SWD programozó újraindításig nem működik)
+(def headlight-on-front nil)  ; nil = a lámpa MOSFET a hátsó vezérlő headlight-pin lábán,
+                              ; t = az első vezérlő PPM lábán (CAN-en kapcsolva)
+(def headlight-pin 'pin-swclk) ; a hátsó vezérlő lámpa lába: az SWD csatlakozó SWCLK lába
+                              ; (közvetlen MCU láb, 3,3 V; induláskor a processzor lehúzza, így
+                              ; bootoláskor a lámpa nem villan fel). 'pin-swdio is jó, de azt
+                              ; induláskor felhúzza. Az ADC lábak a védőkörük miatt nem jók.
+                              ; Az SWD programozó ezután újraindításig nem működik.
 (def dash-light-value 100)    ; a kijelzőnek küldött lámpa érték bekapcsolt lámpánál.
                               ; 100 (0x64) = mint a gyári vezérlő: a 6-os bit kapcsolja a
                               ; kijelző saját lámpáját. 1 = csak az ikon világít.
 
-; Kipörgésgátló (csak 2-es profilban). Az első és a hátsó kerék sebességét
-; hasonlítja össze. Ha az egyik tc-slip-nél többel gyorsabban forog, a hajtását
-; tc-range alatt lineárisan 0-ig csökkenti. 3 gyors gombnyomás: be/ki.
+; Kipörgésgátló (csak 2-es profilban). Csak az első kereket korlátozza a
+; hátsóhoz képest: ha az első tc-slip-nél többel gyorsabban forog, mint a hátsó,
+; az első hajtását tc-range alatt lineárisan 0-ig csökkenti. A hátsó kerékbe
+; nem avatkozik bele. 3 gyors gombnyomás: be/ki.
 (def tc-default t)            ; induláskor bekapcsolva
-(def tc-slip 2.0)             ; km/h - engedélyezett sebességkülönbség (eddig nem szól bele)
+(def tc-slip 2.0)             ; km/h - az első legfeljebb ennyivel lehet gyorsabb (eddig nem szól bele)
 (def tc-range 3.0)            ; km/h - e fölött ennyi további különbségnél a hajtás 0
 (def tc-recover 0.3)          ; s - a csúszás után ennyi idő alatt jön vissza a teljes hajtás
 
@@ -155,8 +158,7 @@
 (def front-speed 0.0)          ; km/h, előjeles, az első vezérlő saját kerékadataival
 (def front-speed-time 0)
 (def tc-on tc-default)         ; kipörgésgátló be/ki (3x gomb)
-(def tc-front 1.0)             ; kipörgésgátló szorzók (1 = nincs beavatkozás)
-(def tc-rear 1.0)
+(def tc-front 1.0)             ; az első kerék kipörgésgátló szorzója (1 = nincs beavatkozás)
 (def tc-time 0)
 (def rear-scale -1.0)          ; a hátsón utoljára beállított áram-szorzó
 
@@ -198,11 +200,11 @@
 
 ; -> Módok és az első vezérlő
 
-; A hátsó áram-szorzó: a mód szorzója x a kipörgésgátló szorzója. Ez a VESC
-; "instant" konfigurációs útja (nem indítja újra az ADC app-ot), és csak
-; változáskor írjuk.
+; A hátsó áram-szorzó: a mód szorzója (a kipörgésgátló a hátsóba nem szól bele).
+; Ez a VESC "instant" konfigurációs útja (nem indítja újra az ADC app-ot), és
+; csak változáskor írjuk.
 (defun apply-scale () {
-        (var s (/ (round (* 100.0 (ix (mode-limits profile speedmode) 2) tc-rear)) 100.0))
+        (var s (/ (round (* 100.0 (ix (mode-limits profile speedmode) 2))) 100.0))
         (if (not (= s rear-scale)) {
                 (conf-set 'l-current-max-scale s)
                 (setq rear-scale s)
@@ -272,13 +274,14 @@
         (setq front-old (and on (not front-warn) (< front-version front-min-version)))
 })
 
-; -> Kipörgésgátló (csak 2-es profilban)
+; -> Kipörgésgátló (csak 2-es profilban, csak az első kerékre)
 ; A hátsó kerék sebessége helyben, az elsőé a visszajelzésből jön (az első
-; vezérlő saját kerékadataival számolva, 50 Hz-en). A csökkentés a VESC
-; áram-szorzóján át hat az ADC app kimenetére: a VESC Tool beállításai
+; vezérlő saját kerékadataival számolva, 50 Hz-en). Ha az első gyorsabban forog
+; a megengedettnél, az első vezérlő áram-szorzóját csökkentjük (a CAN parancs
+; áram %-a). A hátsó kerékbe nem avatkozik bele, a VESC Tool beállításai
 ; (görbe, rámpa) maradnak. Csökkenés azonnal, visszaállás tc-recover alatt.
 
-(defun tc-factor (excess) ; a gyorsabb kerék hajtásának szorzója (0-1)
+(defun tc-factor (excess) ; az első kerék hajtásának szorzója (0-1)
     (clamp (- 1.0 (/ (- excess tc-slip) tc-range)) 0.0 1.0)
 )
 
@@ -295,17 +298,13 @@
         (var dt (clamp (secs-since tc-time) 0.0 0.1))
         (setq tc-time (systime))
         (var kf 1.0)
-        (var kr 1.0)
         (if (tc-active) {
                 (var rear (* (get-speed) 3.6))
                 (var d (- front-speed rear))          ; + = az első forog gyorsabban
                 (if (< rear 0.0) (setq d (- 0.0 d)))  ; hátrafelé gurulva fordítva
                 (setq kf (tc-factor d))
-                (setq kr (tc-factor (- 0.0 d)))
         })
         (setq tc-front (tc-follow tc-front kf dt))
-        (setq tc-rear (tc-follow tc-rear kr dt))
-        (apply-scale)
 })
 
 (defun tc-toggle () ; 3 gyors gombnyomás
@@ -328,8 +327,7 @@
         (looprange i 0 50 {
                 (print (str-merge "elso " (str-from-n front-speed "%.1f")
                         "  hatso " (str-from-n (* (get-speed) 3.6) "%.1f")
-                        " km/h  ->  elso x" (str-from-n tc-front "%.2f")
-                        "  hatso x" (str-from-n tc-rear "%.2f")))
+                        " km/h  ->  elso hajtas x" (str-from-n tc-front "%.2f")))
                 (sleep 0.2)
         })
 })
@@ -668,52 +666,71 @@
             (list 'gaz-nyers thr-raw 'fek-nyers brk-raw 'keretek lever-frames)
             (list 'gaz (get-adc-decoded 0) 'fek (get-adc-decoded 1))
             (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses)
-            (list 'lampa light 'elso-lampa front-lamp 'elso-lab front-pin)
+            (list 'lampa light 'lampa-hely (if headlight-on-front 'elso-ppm headlight-pin)
+                'hatso-lab (if headlight-on-front -1 (gpio-read headlight-pin))
+                'elso-lampa front-lamp 'elso-lab front-pin)
             (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn
                 'elso-verzio front-version 'elso-regi front-old 'elso-vesc-hiba front-fault)
-            (list 'tc tc-on 'tc-aktiv (tc-active) 'tc-elso tc-front 'tc-hatso tc-rear
+            (list 'tc tc-on 'tc-aktiv (tc-active) 'tc-elso tc-front
                 'elso-km/h front-speed)
 )))
 
 ; REPL-ből hívható: (lampa-teszt) - háromszor be- és kikapcsolja a lámpát, és
-; kiírja, mit jelez vissza az első vezérlő (a parancsot és a lámpa láb
-; visszaolvasott szintjét), a végén pedig, mire lehet következtetni.
-; A parancsot a vezérlőszál küldi ki (legfeljebb 0,1 s), itt csak a lámpát állítjuk.
+; kiírja a lámpa láb visszaolvasott szintjét (a hátsó vezérlő headlight-pin
+; lába, vagy headlight-on-front esetén az első vezérlő jelentése), a végén
+; pedig, mire lehet következtetni (README: "A lámpa nem működik").
+; A lámpát a vezérlőszál kapcsolja (legfeljebb 0,1 s), itt csak a lámpát állítjuk.
 (defun lampa-teszt () {
         (var orig light)
         (var follow 0) ; hányszor követte az első a parancsot
         (var ons 0)    ; bekapcsolt lépések
-        (var pinhi 0)  ; ezek közül hányszor volt magas az első vezérlő lámpa lába
-        (print (str-merge "Elso script verzio: " (str-from-n front-version "%d")
-                (if (< front-version front-min-version)
-                    " -> REGI vagy nem valaszol: toltsd fel az uj elso_vezerlo.lisp-et az elso vezerlore!"
-                    " (rendben)")))
-        (if (not headlight-on-front)
-            (print "A lampa a hatso vezerlo headlight-pin laban van (headlight-on-front nil)."))
+        (var pinhi 0)  ; ezek közül hányszor volt magas a láb
+        (var offs 0)
+        (var pinlo 0)
+        (print (if headlight-on-front
+                (str-merge "A lampa az elso vezerlo PPM laban van. Elso script verzio: "
+                    (str-from-n front-version "%d")
+                    (if (< front-version front-min-version)
+                        " -> REGI vagy nem valaszol: toltsd fel az uj elso_vezerlo.lisp-et az elso vezerlore!"
+                        " (rendben)"))
+                "A lampa a hatso vezerlo headlight-pin laban van (alap: SWD csatlakozo, SWCLK)."))
         (looprange i 0 6 {
                 (setq light (not light))
                 (sleep 0.5)
+                (var lvl (if headlight-on-front front-pin (gpio-read headlight-pin)))
                 (if (eq front-lamp light) (setq follow (+ follow 1)))
-                (if light {
+                (if light
+                    {
                         (setq ons (+ ons 1))
-                        (if (= front-pin 1) (setq pinhi (+ pinhi 1)))
-                })
-                (print (str-merge "lampa " (if light "BE" "KI")
-                        " -> elso vezerlo: parancs " (if front-lamp "BE" "KI")
-                        ", lab " (str-from-n front-pin "%d")
-                        ", utolso valasz " (str-from-n (secs-since front-ack-time) "%.2f") " s"))
+                        (if (= lvl 1) (setq pinhi (+ pinhi 1)))
+                    }
+                    {
+                        (setq offs (+ offs 1))
+                        (if (= lvl 0) (setq pinlo (+ pinlo 1)))
+                    })
+                (print (str-merge "lampa " (if light "BE" "KI") " -> lab " (str-from-n lvl "%d")
+                        (if headlight-on-front
+                            (str-merge ", elso vezerlo parancs " (if front-lamp "BE" "KI")
+                                ", utolso valasz " (str-from-n (secs-since front-ack-time) "%.2f") " s")
+                            "")))
                 (sleep 1.0)
         })
         (setq light orig)
-        (if headlight-on-front
-            (print (cond
-                    ((< front-version front-min-version)
-                        "EREDMENY: az elso vezerlo nem valaszol, vagy regi script fut rajta.")
-                    ((< follow 6)
-                        "EREDMENY: az elso vezerlo nem koveti a lampa parancsot (CAN kapcsolat, script).")
-                    ((= pinhi ons)
-                        "EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol. Ha a lampa nem eg: futtasd az elso vezerlon is a (lampa-teszt)-et, es merd a PPM csatlakozon a feszultseget (README).")
-                    (t "EREDMENY: az elso vezerlo laba nem megy magasra (zarlatos MOSFET vagy serult lab). Futtasd az elso vezerlon a (lampa-teszt)-et lehuzott lampa vezetekkel."))))
+        (print (cond
+                ((not headlight-on-front)
+                    (cond
+                        ((and (= pinhi ons) (= pinlo offs))
+                            "EREDMENY: a hatso vezerlo lampa laba rendben kapcsol. Ha a lampa nem villogott, merd az SWD csatlakozon az SWCLK es a GND kozott (BE: kb. 3,3 V). Van fesz: a MOSFET, a bekotes vagy a lampa tapja a hibas.")
+                        ((= pinhi 0)
+                            "EREDMENY: a lab bekapcsolva sem megy magasra. Huzd le a lampa vezeteket es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos.")
+                        (t "EREDMENY: a lab bizonytalanul kapcsol (laza erintkezes, tulterheles?).")))
+                ((< front-version front-min-version)
+                    "EREDMENY: az elso vezerlo nem valaszol, vagy regi script fut rajta.")
+                ((< follow 6)
+                    "EREDMENY: az elso vezerlo nem koveti a lampa parancsot (CAN kapcsolat, script).")
+                ((= pinhi ons)
+                    "EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol. Ha a lampa nem eg: futtasd az elso vezerlon is a (lampa-teszt)-et, es merd a PPM csatlakozon a feszultseget (README).")
+                (t "EREDMENY: az elso vezerlo laba nem megy magasra (zarlatos MOSFET vagy serult lab). Futtasd az elso vezerlon a (lampa-teszt)-et lehuzott lampa vezetekkel.")))
 })
 
 (defun init () {

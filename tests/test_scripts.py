@@ -132,8 +132,9 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(r.v.detached, (3, 1))
         self.assertEqual(r.v.uart_started, (115200, "half-duplex"))
         self.assertEqual(r.v.out("pin-ppm"), 1, "tail light on from boot")
-        self.assertNotIn("pin-adc2", r.v.gpio_mode, "ADC2 is not driven: the headlight is on the front")
-        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0, "headlight off at boot")
+        self.assertNotIn("pin-adc2", r.v.gpio_mode, "ADC2 is not driven")
+        self.assertEqual(r.v.out("pin-swclk"), 0, "headlight on the rear SWD SWCLK pin, off at boot")
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0, "no headlight bit to the front")
         self.assertEqual(r.v.gpio_mode["pin-rx"], "pin-mode-in-pu", "button input")
         self.assertAlmostEqual(r.v.conf["max-speed"], 20 / 3.6)  # P1 D until decided
 
@@ -295,16 +296,28 @@ class ButtonTests(unittest.TestCase):
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
         self.assertTrue(r.g("light"))
+        self.assertEqual(r.v.out("pin-swclk"), 1, "rear SWD SWCLK pin drives the lamp MOSFET")
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0, "the front ESC is not asked for the lamp")
+        self.assertEqual(r.last_dash()[8], 100, "stock M365 light value: bit 6 lights the dash lamp")
+        self.press(r, 0.1)
+        r.step(int(0.5 / STEP))
+        self.assertEqual(r.v.out("pin-swclk"), 0)
+
+    def test_headlight_on_front_option(self):
+        r = Rear()
+        r.i.set("headlight-on-front", True)
+        r.boot_p1()
+        self.press(r, 0.1)
+        r.step(int(0.5 / STEP))
         self.assertEqual(r.v.can_tx[-1][1][1] & 4, 4, "headlight bit to the front ESC")
         self.assertEqual(r.v.can_tx[-1][1][1] & 3, 0, "limit flags unchanged (P1)")
-        self.assertEqual(r.last_dash()[8], 100, "stock M365 light value: bit 6 lights the dash lamp")
         self.press(r, 0.1)
         r.step(int(0.5 / STEP))
         self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0)
 
     def test_legacy_headlight_on_rear_adc2(self):
         r = Rear()
-        r.i.set("headlight-on-front", None)
+        r.i.set("headlight-pin", Symbol("pin-adc2"))
         r.i.call("boot")
         r.v.gpio_in["pin-rx"] = 1
         r.boot_p1()
@@ -561,6 +574,7 @@ class FrontTests(unittest.TestCase):
 
     def test_rear_light_toggle_reaches_front(self):
         r = Rear()
+        r.i.set("headlight-on-front", True)
         r.boot_p1()
         r.i.set("light", True)
         r.step(6)
