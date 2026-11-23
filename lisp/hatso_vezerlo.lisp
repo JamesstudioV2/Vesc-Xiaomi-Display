@@ -249,6 +249,17 @@
 
 (defun min2 (a b) (if (< a b) a b))
 
+; Konfiguráció olvasása hibatűréssel. A kiadott 7.00-s firmware (2026-05-15)
+; nem ismer néhány később hozzáadott paramétert (adc-tc, adc-v2-...): ezekre
+; a conf-get hibát dob, ami az egész szálat leállítaná. Ilyenkor dflt.
+(defun conf-try (name dflt) {
+        (var r (trap (conf-get name)))
+        (if (eq (car r) 'exit-ok) (ix r 1) dflt)
+})
+
+(defun conf-set-try (name val) ; t, ha sikerült
+    (eq (car (trap (conf-set name val))) 'exit-ok))
+
 (defun mode-limits (prof mode)
     (if (= prof 2)
         (cond ((= mode 2) p2-eco) ((= mode 4) p2-sport) (t p2-drive))
@@ -455,8 +466,10 @@
         (var start (conf-get 'adc-v1-start))
         (setq thr-start start)
         (setq thr-end (conf-get 'adc-v1-end))
-        (setq brk-start (conf-get 'adc-v2-start))
-        (setq brk-end (conf-get 'adc-v2-end))
+        ; A fékkar (ADC2) kalibrációját a kiadott 7.00-s firmware nem adja ki a
+        ; Lispnek: ott a gázkarét használjuk (a két kar azonos típusú).
+        (setq brk-start (conf-try 'adc-v2-start start))
+        (setq brk-end (conf-try 'adc-v2-end thr-end))
         (setq thr-gate-inv (> start thr-end))
         (setq thr-gate-v start)
 })
@@ -1021,30 +1034,44 @@
         (bufset-u8 tx-frame 4 0x64) ; cmd
         (bufset-u8 tx-frame 5 0x00) ; arg
 
-        ; A VESC ADC app saját kipörgésgátlóját kikapcsoljuk (csak a RAM-ban), a
-        ; script kipörgésgátlója helyettesíti; különben a 3x gombos kikapcsolás
-        ; nem kapcsolná ki teljesen. Most még nincs kimenet, a beállítás biztonságos.
-        (if (= (conf-get 'adc-tc) 1) {
-                (conf-set 'adc-tc 0)
-                (print "ADC app Traction Control kikapcsolva, a script kiporgesgatloja mukodik helyette")
-        })
-
-        (setq tc-time (systime))
-        (refresh-gate)
-        (apply-mode) ; induláskor az 1-es profil korlátai élnek
-
-        (event-register-handler (spawn can-event-loop))
-        (event-enable 'event-can-sid)
-
+        ; A kijelző kommunikáció a lehető leghamarabb indul, a beállítások előtt:
+        ; ha azokban valami hibát dob, a kijelző akkor is választ kap.
         ; half-duplex módban csak a TX láb kell, az RX szabad: ezen van a gomb
         (uart-start 115200 'half-duplex)
         (gpio-configure button-pin 'pin-mode-in-pu)
         (spawn 200 rx-thread)
+        (setq tc-time (systime))
+})
+
+; Indulás, 2. rész: beállítások és CAN.
+(defun init-rest () {
+        ; A VESC ADC app saját kipörgésgátlóját kikapcsoljuk (csak a RAM-ban), a
+        ; script kipörgésgátlója helyettesíti; különben a 3x gombos kikapcsolás
+        ; nem kapcsolná ki teljesen. Most még nincs kimenet, a beállítás biztonságos.
+        ; A kiadott 7.00-s firmware ezt a paramétert nem ismeri: ott a VESC Tool-ban
+        ; kell kikapcsolni (App Settings -> ADC -> Traction Control: False).
+        (if (= (conf-try 'adc-tc 0) 1) {
+                (conf-set-try 'adc-tc 0)
+                (print "ADC app Traction Control kikapcsolva, a script kiporgesgatloja mukodik helyette")
+        })
+        (refresh-gate)
+        (apply-mode) ; induláskor az 1-es profil korlátai élnek
+        (event-register-handler (spawn can-event-loop))
+        (event-enable 'event-can-sid)
         (spawn 200 balance-thread)
 })
 
+; Indulás: mindkét rész védve, a hibát a konzol kiírja, és a vezérlés akkor is
+; elindul (a kijelző, a gomb és a lámpák működjenek).
+(defun boot () {
+        (var r (trap (init)))
+        (if (eq (car r) 'exit-error) (print (list 'hiba-init (ix r 1))))
+        (setq r (trap (init-rest)))
+        (if (eq (car r) 'exit-error) (print (list 'hiba-init-rest (ix r 1))))
+})
+
 (defun main () {
-        (init)
+        (boot)
         (control-loop)
 })
 

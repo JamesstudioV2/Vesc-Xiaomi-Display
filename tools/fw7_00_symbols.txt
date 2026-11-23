@@ -393,7 +393,6 @@ F observer-error
 F or
 F out_of_memory
 F out_of_stack
-F override-led
 F override-speed
 F override-temp-motor
 F phase-all
@@ -492,8 +491,6 @@ F sha256-str
 F shl
 F show-trapped-error
 F shr
-F shutdown
-F shutdown-btn-read
 F shutdown-hold
 F sin
 F sleep
@@ -605,16 +602,11 @@ C a04
 C adc-ctrl-type
 C adc-ramp-time-neg
 C adc-ramp-time-pos
-C adc-tc
-C adc-tc-max-diff
 C adc-thr-hyst
-C adc-v1-center
 C adc-v1-end
 C adc-v1-max
 C adc-v1-min
 C adc-v1-start
-C adc-v2-end
-C adc-v2-start
 C app-to-use
 C big-endian
 C bms-ah-cnt

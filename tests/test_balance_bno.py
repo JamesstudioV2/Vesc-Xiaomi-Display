@@ -171,3 +171,22 @@ class BalanceTractionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrakeCalibrationFallbackTests(unittest.TestCase):
+    def test_release_firmware_uses_throttle_calibration(self):
+        r = Rear()                              # kiadott 7.00: nincs adc-v2-* a Lispben
+        r.v.conf["adc-v1-start"] = 0.9
+        r.v.conf["adc-v1-end"] = 2.1
+        r.i.call("refresh-gate")
+        self.assertEqual(r.g("brk-start"), 0.9)
+        self.assertEqual(r.g("brk-end"), 2.1)
+
+    def test_newer_firmware_uses_brake_calibration(self):
+        r = Rear()
+        r.v.newer_fw = True
+        r.v.conf["adc-v2-start"] = 0.7
+        r.v.conf["adc-v2-end"] = 1.9
+        r.i.call("refresh-gate")
+        self.assertEqual(r.g("brk-start"), 0.7)
+        self.assertEqual(r.g("brk-end"), 1.9)

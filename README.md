@@ -164,9 +164,10 @@ sebességgel.
    - Use Filter: `True`
    - Safe Start: `Regular` (**fontos**, ld. lent)
    - Multiple VESCs Over CAN: **`True`** (ezzel kapja az első motor a gázt és a féket)
-   - Traction Control: `False`. A kipörgésgátlót a script végzi. Ha itt be van
-     kapcsolva, a script induláskor kikapcsolja (csak a RAM-ban), különben a 3x
-     gombos kikapcsolás nem kapcsolná ki teljesen.
+   - Traction Control: **`False`**. A kipörgésgátlót a script végzi. A kiadott
+     7.00-s firmware (2026-05-15) ezt a beállítást a Lisp felől nem engedi
+     kikapcsolni, ezért **itt kapcsold ki**. Az újabb 7.00-s buildeken a script
+     induláskor magától kikapcsolja (csak a RAM-ban).
 3. **ADC → Mapping:** kalibráld a gázt és a féket a kijelzőn keresztül
    (ld. a következő pontot).
 4. Itt hangolható minden más is: Throttle Curve, Ramp Time Pos/Neg, holtjáték
@@ -527,8 +528,12 @@ python3 -m unittest discover -s tests -v
 ```
 
 - `tools/lisp_check.py`: zárójelezés, ismeretlen függvény- és változónevek,
-  hibás `conf-set`/`gpio` paraméternevek a 7.00-s firmware forrásából generált
-  listához (`tools/fw7_00_symbols.txt`) mérve.
+  hibás `conf-set`/`gpio` paraméternevek a **kiadott 7.00-s** firmware
+  (Release 7.00, 2026-05-15) forrásából generált listához
+  (`tools/fw7_00_symbols.txt`) mérve. Ami a 7.00-s ágra később került (pl.
+  `adc-tc`, `adc-v2-start`), azt a scriptek csak a hibatűrő `conf-try` /
+  `conf-set-try` függvényen keresztül használhatják: a kiadott firmware-en egy
+  ismeretlen paraméter hibát dob, és leállítja a szálat.
 - `tests/`: egy kis LispBM-értelmező szimulált VESC-cel. A valódi Lisp fájlokat
   futtatja, és ellenőrzi a kijelzőprotokollt (CRC, válaszok, visszhang), a
   profilválasztást, a berúgást, a gombot, a féklámpát, a kijelző mezőit, a

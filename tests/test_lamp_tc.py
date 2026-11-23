@@ -303,9 +303,10 @@ class TractionToggleTests(unittest.TestCase):
 class TractionSetupTests(unittest.TestCase):
     def test_adc_app_tc_switched_off_at_boot(self):
         i = Interp()
+        i.vesc.newer_fw = True          # 2026 júniusa utáni 7.00: ismeri az adc-tc-t
         i.vesc.conf["adc-tc"] = 1
         i.load(REAR)
-        i.call("init")
+        i.call("boot")
         self.assertEqual(i.vesc.conf["adc-tc"], 0)
         self.assertTrue(i.vesc.output_disabled, "switched while the output is still disabled")
 
