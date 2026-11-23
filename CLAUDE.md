@@ -16,11 +16,11 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
 - Bluetooth: a kijelző BLE-je **nem** használható VESC Tool-hoz. Javaslat: VESC Express a CAN-en (kész modul, vagy
   DIY ESP32-S3 + SN65HVD230, a `S3 N16R8` / `S3 FH4R2` target CAN-je GPIO16 TX / GPIO17 RX). README: „Bluetooth (VESC Tool)”.
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
-- Első lámpa: az **első vezérlő PPM lábán** → N-FET (`headlight-on-front` t). A hátsó a CAN parancs flags 2-es
-  bitjével kapcsolja (`elso_vezerlo.lisp`: `light-pin`, üzenetkiesésnél az utolsó állapot marad). A hátsó ADC2-n
-  nem működött (a felhasználó jelezte; valószínű ok: az ADC bemenet védő/szűrő köre a lapon).
-  `headlight-on-front nil` = a hátsó vezérlő `headlight-pin` lábán (alap `'pin-adc2`, tartalék `'pin-swdio`).
-  Minden ágon (main, Balance, Advanced-Balance). A `'pin-ppm` a 75_100_V2 / MKSESC V2 lapokon PB6 (TIM4 CH1).
+- Első (külső) lámpa: **a hátsó vezérlő SWD csatlakozójának SWCLK lábán** → N-FET (2026-11-23, a felhasználó kérése:
+  `headlight-on-front nil`, `headlight-pin 'pin-swclk`; az SWCLK-t a processzor induláskor lehúzza, így bootoláskor
+  nem villan fel). Előtte: hátsó ADC2 (nem működött, az ADC bemenet védőköre), majd az első vezérlő PPM lába (nem
+  működött, valószínű nyáksérülés). Opció: `headlight-on-front t` = az első PPM lábán, CAN flags bit2, az első
+  `light-pin`. A `'pin-ppm` a 75_100_V2 / MKSESC V2 lapokon PB6 (TIM4 CH1). Minden ágon.
 - Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
   lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
 - CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
@@ -28,9 +28,10 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)` mindkét
   vezérlőn, `(tc-teszt)` a hátsón, `(bno)` az elsőn.
 - Kipörgésgátló (minden ágon egységesen): csak 2-es profilban, induláskor be, **3 kattintás** = be/ki + 3 sípolás.
-  `tc-slip` 2 km/h engedélyezett különbség, `tc-range` 3 km/h alatt 0-ig, `tc-recover` 0,3 s visszaállás. A gyorsabb
-  kerék `l-current-max-scale`-jét csökkenti (hátsó helyben, első a CAN parancs áram %-ában; ez a VESC „instant”
-  conf-útja). Az ADC app saját TC-jét induláskor kikapcsolja (app-paraméter `conf-set` menet közben a Safe Start
+  **Csak az első kereket korlátozza a hátsóhoz képest, a hátsóba nem avatkozik bele** (2026-11-23, a felhasználó
+  kérése; nincs `tc-rear`). `tc-slip` 2 km/h (ennyivel lehet gyorsabb az első), `tc-range` 3 km/h alatt 0-ig,
+  `tc-recover` 0,3 s visszaállás. Az első vezérlő `l-current-max-scale`-jét csökkenti (a CAN parancs áram %-a;
+  ez a VESC „instant” conf-útja). Az ADC app saját TC-jét induláskor kikapcsolja (app-paraméter `conf-set` menet közben a Safe Start
   miatt elvenné a gázt, ld. referencia-elemzés). 2-es profilban a parancs 50 Hz-en megy. Sípolások között
   legalább 0,15 s (`beep-spacing`). 4+ kattintás: nincs funkció.
 - BNO085 (a felhasználó „BMO085”-öt írt, a „COM2” portra kötötte): a VESC Tool nem ismeri. Feltételezés: a COM1 a
@@ -141,9 +142,13 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   to Use-t is), a README mérési táblázatot kapott (PPM jel láb feszültsége), tartalék láb: első `light-pin
   'pin-swdio`, vagy hátsó `headlight-on-front nil` + `headlight-pin 'pin-swdio`. 103 teszt a main-en.
 
+- 2026-11-23 (4): A felhasználó kérésére: a külső lámpa a hátsó vezérlő SWD csatlakozójának SWCLK lábára került
+  (alapérték), a hátsó `(lampa-teszt)` a helyi lábat is visszaolvassa és eredményt ír; a kipörgésgátló csak az első
+  kereket korlátozza (minden ágon; az AB ágon az AB-kipörgésgátló is). Rajz, README frissítve. 108 teszt a main-en.
+
 ## Következő lépések
-1. Lámpa: a két `(lampa-teszt)` kimenete (`EREDMENY:` sorok) és a PPM jel láb mért feszültsége kell; ebből
-   dől el, hogy a láb, a nyák vagy a MOSFET/bekötés a hibás. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+1. Lámpa: a hátsó SWCLK-ra kötve kell a visszajelzés; ha nem megy: a hátsó `(lampa-teszt)` `EREDMENY:` sora és
+   az SWCLK–GND mért feszültsége. Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
    BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
    `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
    AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
