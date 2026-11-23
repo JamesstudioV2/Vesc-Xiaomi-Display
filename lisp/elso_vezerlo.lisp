@@ -28,7 +28,9 @@
 (def ack-sid 0x4D1)      ; első -> hátsó (front-ack-sid)
 (def imu-sid 0x4D2)      ; első -> hátsó: BNO085 szögek (a hátsó imu-sid értéke)
 (def rx-timeout 1.0)     ; s
-(def light-pin 'pin-ppm) ; az első lámpa MOSFET gate-je (App to Use: No App, Servo Output: ki)
+(def light-pin 'pin-ppm) ; az első lámpa MOSFET gate-je (App to Use: No App, Servo Output: ki).
+                         ; Ha a PPM láb sérült: 'pin-swdio vagy 'pin-swclk (az SWD csatlakozó,
+                         ; közvetlen MCU láb; utána az SWD programozó újraindításig nem megy).
 
 ; BNO085 a COMM porton (a main ágon nem kell, a balansz ágakon t)
 ;  I2C (alap, PS0 = PS1 = 0):  SDA -> RX, SCL -> TX, VIN -> 3.3V, GND -> GND
@@ -74,6 +76,11 @@
         ((> x hi) hi)
         (t x)
 ))
+
+(defun conf-try (name dflt) { ; konfiguráció olvasása; ha a firmware nem ismeri: dflt
+        (var r (trap (conf-get name)))
+        (if (eq (car r) 'exit-ok) (ix r 1) dflt)
+})
 
 ; flags: bit0 = hajtás, bit1 = fék; scale: %; kmh10: km/h*10; watt100: watt/100
 ; Csak a megváltozott értéket írjuk (a kipörgésgátló gyakran állítja a szorzót).
@@ -135,24 +142,41 @@
 })
 
 ; REPL-ből hívható: (lampa-teszt) - a lámpa kimenetet 5x 1 s-ra bekapcsolja,
-; a hátsó parancsától függetlenül. Ha a lámpa ettől sem világít: bekötés vagy
-; MOSFET hiba. A "lab" a láb visszaolvasott szintje (BE alatt 1 kell legyen).
+; a hátsó parancsától függetlenül, és visszaolvassa a láb szintjét ("lab",
+; BE alatt 1, KI alatt 0 kell legyen). A végén kiírja, mire lehet következtetni
+; (README: "A lámpa nem működik").
 (defun lampa-teszt () {
+        (var app (conf-try 'app-to-use -1))
+        (var hi 0) ; bekapcsolva hányszor volt magas a láb
+        (var lo 0) ; kikapcsolva hányszor volt alacsony
         (setq lamp-test t)
-        (print "Lampa teszt: 5x 1 s BE, 1 s KI a PPM labon")
+        (print (str-merge "Lampa teszt: 5x 1 s BE, 1 s KI (App to Use: " (str-from-n app "%d")
+                ", 0 = No App)"))
+        (if (or (= app 1) (= app 4))
+            (print "FIGYELEM: az elso vezerlon a PPM app fut, az is ezt a labat hasznalja: App to Use = No App!"))
         (looprange i 0 5 {
                 (gpio-configure light-pin 'pin-mode-out)
                 (gpio-write light-pin 1)
                 (sleep 0.05)
-                (print (str-merge "BE  (lab = " (str-from-n (gpio-read light-pin) "%d") ")"))
+                (var r1 (gpio-read light-pin))
+                (if (= r1 1) (setq hi (+ hi 1)))
+                (print (str-merge "BE  (lab = " (str-from-n r1 "%d") ")"))
                 (sleep 0.95)
                 (gpio-write light-pin 0)
                 (sleep 0.05)
-                (print (str-merge "KI  (lab = " (str-from-n (gpio-read light-pin) "%d") ")"))
+                (var r0 (gpio-read light-pin))
+                (if (= r0 0) (setq lo (+ lo 1)))
+                (print (str-merge "KI  (lab = " (str-from-n r0 "%d") ")"))
                 (sleep 0.95)
         })
         (setq lamp-test nil)
         (gpio-write light-pin (if front-light 1 0))
+        (print (cond
+                ((and (= hi 5) (= lo 5))
+                    "EREDMENY: a vezerlo laba rendben kapcsol. Ha a lampa nem villogott, merd a PPM csatlakozo jel es GND laba kozott (BE: kb. 3,3 V). Nincs fesz: a lab es a csatlakozo kozti ut (nyak) serult. Van fesz: MOSFET, bekotes vagy a lampa tapja a hibas.")
+                ((= hi 0)
+                    "EREDMENY: a lab bekapcsolva sem megy magasra. Huzd le a lampa vezeteket, es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos; ha ugy sem, a vezerlo laba serult (hasznald a 'pin-swdio labat).")
+                (t "EREDMENY: a lab bizonytalanul kapcsol (laza erintkezes, tulterheles?).")))
         (print "Lampa teszt vege")
 })
 

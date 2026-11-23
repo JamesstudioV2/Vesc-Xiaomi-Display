@@ -30,7 +30,7 @@
 ;   PPM jel -> féklámpa MOSFET gate
 ;   ADC1, ADC2 -> szabad (10 kOhm-mal GND-re ajánlott)
 ;   Első lámpa: az ELSŐ vezérlő PPM lábán (MOSFET gate), CAN-en kapcsolva
-;   (headlight-on-front). nil esetén a régi módon a hátsó ADC2 lábán.
+;   (headlight-on-front). nil esetén a hátsó vezérlő headlight-pin lábán.
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
 ; Részletes leírás és VESC Tool beállítások: README.md
@@ -51,8 +51,11 @@
 (def boot-mode 1)             ; induló mód: 1 = D, 2 = ECO, 4 = S
 (def light-default nil)       ; első lámpa induláskor: t = be, nil = ki
 (def headlight-on-front t)    ; t = a lámpa MOSFET az első vezérlő PPM lábán (CAN-en kapcsolva),
-                              ; nil = a hátsó vezérlő ADC2 lábán (sok lapon az ADC bemenet
-                              ; védőellenállásai miatt ez nem tud MOSFET-et kapcsolni)
+                              ; nil = a hátsó vezérlő headlight-pin lábán
+(def headlight-pin 'pin-adc2) ; ha headlight-on-front nil: a hátsó vezérlő lámpa lába. Az ADC2
+                              ; sok lapon a védőellenállások miatt nem tud MOSFET-et kapcsolni;
+                              ; 'pin-swdio / 'pin-swclk: az SWD csatlakozó, közvetlen MCU láb
+                              ; (utána az SWD programozó újraindításig nem működik)
 (def dash-light-value 100)    ; a kijelzőnek küldött lámpa érték bekapcsolt lámpánál.
                               ; 100 (0x64) = mint a gyári vezérlő: a 6-os bit kapcsolja a
                               ; kijelző saját lámpáját. 1 = csak az ikon világít.
@@ -545,7 +548,7 @@
             })
             (setq blink-on t)) ; nem fékez: folyamatosan világít
         (gpio-write 'pin-ppm (if blink-on 1 0))
-        (if (not headlight-on-front) (gpio-write 'pin-adc2 (if light 1 0)))
+        (if (not headlight-on-front) (gpio-write headlight-pin (if light 1 0)))
 })
 
 ; -> Profil választás és vezérlés
@@ -638,7 +641,7 @@
                 ; lábat bemenetre állítja. Ezért a lábakat újra beállítjuk, a
                 ; kimeneti szint közben nem változik.
                 (gpio-configure 'pin-ppm 'pin-mode-out)
-                (if (not headlight-on-front) (gpio-configure 'pin-adc2 'pin-mode-out))
+                (if (not headlight-on-front) (gpio-configure headlight-pin 'pin-mode-out))
                 (gpio-configure button-pin 'pin-mode-in-pu)
                 (refresh-gate)
                 (update-temp-warn)
@@ -673,18 +676,28 @@
 )))
 
 ; REPL-ből hívható: (lampa-teszt) - háromszor be- és kikapcsolja a lámpát, és
-; kiírja, mit jelez vissza az első vezérlő. Ha a "parancs" követi, de a lámpa
-; nem világít: bekötés/MOSFET (az első vezérlőn: (lampa-teszt)).
+; kiírja, mit jelez vissza az első vezérlő (a parancsot és a lámpa láb
+; visszaolvasott szintjét), a végén pedig, mire lehet következtetni.
 ; A parancsot a vezérlőszál küldi ki (legfeljebb 0,1 s), itt csak a lámpát állítjuk.
 (defun lampa-teszt () {
         (var orig light)
+        (var follow 0) ; hányszor követte az első a parancsot
+        (var ons 0)    ; bekapcsolt lépések
+        (var pinhi 0)  ; ezek közül hányszor volt magas az első vezérlő lámpa lába
         (print (str-merge "Elso script verzio: " (str-from-n front-version "%d")
                 (if (< front-version front-min-version)
                     " -> REGI vagy nem valaszol: toltsd fel az uj elso_vezerlo.lisp-et az elso vezerlore!"
                     " (rendben)")))
+        (if (not headlight-on-front)
+            (print "A lampa a hatso vezerlo headlight-pin laban van (headlight-on-front nil)."))
         (looprange i 0 6 {
                 (setq light (not light))
                 (sleep 0.5)
+                (if (eq front-lamp light) (setq follow (+ follow 1)))
+                (if light {
+                        (setq ons (+ ons 1))
+                        (if (= front-pin 1) (setq pinhi (+ pinhi 1)))
+                })
                 (print (str-merge "lampa " (if light "BE" "KI")
                         " -> elso vezerlo: parancs " (if front-lamp "BE" "KI")
                         ", lab " (str-from-n front-pin "%d")
@@ -692,6 +705,15 @@
                 (sleep 1.0)
         })
         (setq light orig)
+        (if headlight-on-front
+            (print (cond
+                    ((< front-version front-min-version)
+                        "EREDMENY: az elso vezerlo nem valaszol, vagy regi script fut rajta.")
+                    ((< follow 6)
+                        "EREDMENY: az elso vezerlo nem koveti a lampa parancsot (CAN kapcsolat, script).")
+                    ((= pinhi ons)
+                        "EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol. Ha a lampa nem eg: futtasd az elso vezerlon is a (lampa-teszt)-et, es merd a PPM csatlakozon a feszultseget (README).")
+                    (t "EREDMENY: az elso vezerlo laba nem megy magasra (zarlatos MOSFET vagy serult lab). Futtasd az elso vezerlon a (lampa-teszt)-et lehuzott lampa vezetekkel."))))
 })
 
 (defun init () {
@@ -703,9 +725,9 @@
 
         (gpio-configure 'pin-ppm 'pin-mode-out)     ; féklámpa
         (gpio-write 'pin-ppm 1)
-        (if (not headlight-on-front) {               ; első lámpa a hátsó ADC2-n (régi mód)
-                (gpio-configure 'pin-adc2 'pin-mode-out)
-                (gpio-write 'pin-adc2 (if light 1 0))
+        (if (not headlight-on-front) {               ; első lámpa a hátsó vezérlő lábán
+                (gpio-configure headlight-pin 'pin-mode-out)
+                (gpio-write headlight-pin (if light 1 0))
         })
 
         ; uart-read-bytes az olvasott bájtok után egy 0-t is ír, ezért +1 hely kell
