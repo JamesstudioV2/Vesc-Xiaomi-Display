@@ -10,9 +10,11 @@
 ;  - Kijelző gomb a kijelző zöld vezetékén, a COMM port RX lábán (felhúzó
 ;    ellenállás 3.3V-ra, lenyomva a kijelző GND-re húzza):
 ;      1x nyomás = lámpa: a kijelző saját lámpája + a hátsó vezérlő SWD
-;                  csatlakozójának SWCLK lábán lévő külső lámpa (MOSFET)
+;                  csatlakozóján lévő külső lámpa (MOSFET; az SWCLK és az
+;                  SWDIO láb is a lámpa jelét adja)
 ;      2x nyomás = módváltás  D -> S -> ECO -> D
-;      3x nyomás = kipörgésgátló be/ki (csak 2-es profilban), 3 sípolás
+;      3x nyomás = kipörgésgátló be/ki (csak 2-es profilban), 3 sípolás;
+;                  bekapcsolt kipörgésgátlónál a kijelzőn a Bluetooth ikon világít
 ;  - PPM láb: féklámpa MOSFET. Alapból folyamatosan világít, fékezéskor villog.
 ;  - Kijelzőn: sebesség, akku töltöttség, mód (ECO/D/S), hőfok ikon, hibakód.
 ;  - 1-es profil (alapértelmezett, "rendőr mód"): csak a hátsó motor megy,
@@ -22,7 +24,7 @@
 ;    Kipörgésgátló: ha az első kerék a megengedettnél gyorsabban forog, mint a
 ;    hátsó, az első hajtását csökkenti; a hátsóba nem avatkozik bele
 ;    (induláskor bekapcsolva).
-;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (tc-teszt)
+;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (ikon-teszt), (tc-teszt)
 ;
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
@@ -30,8 +32,9 @@
 ;   kijelző zöld (gomb) -> RX + 470 Ohm felhúzó ellenállás 3.3V-ra
 ;   PPM jel -> féklámpa MOSFET gate
 ;   ADC1, ADC2 -> szabad (10 kOhm-mal GND-re ajánlott)
-;   Külső lámpa: a hátsó vezérlő SWD csatlakozójának SWCLK lábán (MOSFET gate,
-;   headlight-pin). headlight-on-front t esetén az első vezérlő PPM lábán (CAN).
+;   Külső lámpa: a hátsó vezérlő SWD csatlakozójának SWCLK (vagy SWDIO) lábán
+;   (MOSFET gate, headlight-pin / headlight-pin2). headlight-on-front t esetén
+;   az első vezérlő PPM lábán (CAN).
 ;
 ; Az első (slave) vezérlőre az elso_vezerlo.lisp kerül.
 ; Részletes leírás és VESC Tool beállítások: README.md
@@ -55,12 +58,21 @@
                               ; t = az első vezérlő PPM lábán (CAN-en kapcsolva)
 (def headlight-pin 'pin-swclk) ; a hátsó vezérlő lámpa lába: az SWD csatlakozó SWCLK lába
                               ; (közvetlen MCU láb, 3,3 V; induláskor a processzor lehúzza, így
-                              ; bootoláskor a lámpa nem villan fel). 'pin-swdio is jó, de azt
-                              ; induláskor felhúzza. Az ADC lábak a védőkörük miatt nem jók.
-                              ; Az SWD programozó ezután újraindításig nem működik.
+                              ; bootoláskor a lámpa nem villan fel). Az ADC lábak a védőkörük
+                              ; miatt nem jók. Az SWD programozó ezután újraindításig nem megy.
+(def headlight-pin2 'pin-swdio) ; ugyanaz a jel az SWD csatlakozó másik jellábán is, így a
+                              ; MOSFET bármelyikre köthető (a feliratok lapnként eltérnek).
+                              ; nil = csak a headlight-pin. (Az SWDIO-t induláskor a processzor
+                              ; felhúzza: ott a lámpa a script indulásáig halványan éghet.)
+(def headlight-mode 'pin-mode-out) ; 'pin-mode-out = 3,3 V-os kimenet (logikai szintű MOSFET kell).
+                              ; 'pin-mode-od = nyitott drain: egy 1 kOhm-os ellenállás a láb és
+                              ; az 5 V közé, így a gate 5 V-ot kap (ha a MOSFET 3,3 V-tal nem
+                              ; nyit ki). Az SWD lábak 5 V-tűrők. Ilyenkor bootoláskor a lámpa
+                              ; a script indulásáig világít.
 (def dash-light-value 100)    ; a kijelzőnek küldött lámpa érték bekapcsolt lámpánál.
                               ; 100 (0x64) = mint a gyári vezérlő: a 6-os bit kapcsolja a
                               ; kijelző saját lámpáját. 1 = csak az ikon világít.
+                              ; Ha a kijelző lámpája nem gyullad ki: (ikon-teszt), README.
 
 ; Kipörgésgátló (csak 2-es profilban). Csak az első kereket korlátozza a
 ; hátsóhoz képest: ha az első tc-slip-nél többel gyorsabban forog, mint a hátsó,
@@ -70,6 +82,12 @@
 (def tc-slip 2.0)             ; km/h - az első legfeljebb ennyivel lehet gyorsabb (eddig nem szól bele)
 (def tc-range 3.0)            ; km/h - e fölött ennyi további különbségnél a hajtás 0
 (def tc-recover 0.3)          ; s - a csúszás után ennyi idő alatt jön vissza a teljes hajtás
+; Jelzés a kijelzőn: amíg a kipörgésgátló be van kapcsolva (2-es profilban), ez a
+; bit is megy a kijelzőnek (Bluetooth ikon). A Bluetooth ikon bitje sehol nincs
+; dokumentálva (a gyári kijelzőn a saját BLE modulja kapcsolja): ha nem az
+; világít, az (ikon-teszt) megmutatja, melyik mező/bit kell (README).
+(def tc-icon-field 2)         ; 0 = mód, 2 = lámpa mező; -1 = nincs jelzés
+(def tc-icon-bit 2)           ; ezt a bitet kapcsolja be a mezőben
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -161,6 +179,10 @@
 (def tc-front 1.0)             ; az első kerék kipörgésgátló szorzója (1 = nincs beavatkozás)
 (def tc-time 0)
 (def rear-scale -1.0)          ; a hátsón utoljára beállított áram-szorzó
+(def dash-test-field -1)       ; (ikon-teszt) alatt: a felülírt kijelző mező (-1 = nincs teszt)
+(def dash-test-value 0)
+(def dash-test-or t)           ; t = a bitet hozzáadja a mezőhöz, nil = a mezőt lecseréli
+(def dash-test-step -1)        ; a teszt lépés száma, a sebesség helyén látszik (-1 = nincs)
 
 @const-start
 
@@ -385,6 +407,15 @@
         (app-adc-override 1 brk-v)
 })
 
+; A kijelzőnek küldött mező (0 = mód, 1 = akku, 2 = lámpa, 3 = sípolás,
+; 4 = sebesség, 5 = hibakód) egy bitjét bekapcsolja.
+(defun dash-or (field bits)
+    (bufset-u8 tx-frame (+ 6 field) (bitwise-or (bufget-u8 tx-frame (+ 6 field)) bits)))
+
+; A kipörgésgátló jelzése (Bluetooth ikon): a kapcsoló állása 2-es profilban.
+(defun tc-icon-on ()
+    (and tc-on (= profile 2) (>= tc-icon-field 0) (<= tc-icon-field 5)))
+
 (defun send-dash () {
         (var spd (speed-kmh))
         (var batt (to-i (clamp (* (get-batt) 100.0) 0.0 100.0)))
@@ -409,6 +440,12 @@
                 (front-warn front-error-code)
                 (front-old front-old-error-code)
                 (t 0)))
+        (if (< dash-test-field 0)
+            (if (tc-icon-on) (dash-or tc-icon-field tc-icon-bit)) ; kipörgésgátló: Bluetooth ikon
+            (if dash-test-or ; (ikon-teszt)
+                (dash-or dash-test-field dash-test-value)
+                (bufset-u8 tx-frame (+ 6 dash-test-field) dash-test-value)))
+        (if (>= dash-test-step 0) (bufset-u8 tx-frame 10 dash-test-step))
         (var sum 0)
         (looprange i 2 12 (setq sum (+ sum (bufget-u8 tx-frame i))))
         (var crc (bitwise-xor sum 0xFFFF))
@@ -538,6 +575,19 @@
 
 ; -> Lámpák
 
+; A külső lámpa lábai a hátsó vezérlőn (headlight-on-front esetén egyik sem).
+(defun lamp-config ()
+    (if (not headlight-on-front) {
+            (gpio-configure headlight-pin headlight-mode)
+            (if headlight-pin2 (gpio-configure headlight-pin2 headlight-mode))
+}))
+
+(defun lamp-write (v)
+    (if (not headlight-on-front) {
+            (gpio-write headlight-pin v)
+            (if headlight-pin2 (gpio-write headlight-pin2 v))
+}))
+
 (defun lights-step () {
         (if braking
             (if (> (secs-since blink-time) brake-blink-half) {
@@ -546,7 +596,7 @@
             })
             (setq blink-on t)) ; nem fékez: folyamatosan világít
         (gpio-write 'pin-ppm (if blink-on 1 0))
-        (if (not headlight-on-front) (gpio-write headlight-pin (if light 1 0)))
+        (lamp-write (if light 1 0))
 })
 
 ; -> Profil választás és vezérlés
@@ -639,7 +689,7 @@
                 ; lábat bemenetre állítja. Ezért a lábakat újra beállítjuk, a
                 ; kimeneti szint közben nem változik.
                 (gpio-configure 'pin-ppm 'pin-mode-out)
-                (if (not headlight-on-front) (gpio-configure headlight-pin 'pin-mode-out))
+                (lamp-config)
                 (gpio-configure button-pin 'pin-mode-in-pu)
                 (refresh-gate)
                 (update-temp-warn)
@@ -668,69 +718,132 @@
             (list 'gomb-lab (gpio-read button-pin) 'lenyomva btn-state 'nyomasok btn-presses)
             (list 'lampa light 'lampa-hely (if headlight-on-front 'elso-ppm headlight-pin)
                 'hatso-lab (if headlight-on-front -1 (gpio-read headlight-pin))
+                'hatso-lab2 (if (or headlight-on-front (not headlight-pin2)) -1 (gpio-read headlight-pin2))
                 'elso-lampa front-lamp 'elso-lab front-pin)
             (list 'elso-ack-s (secs-since front-ack-time) 'elso-flags front-ack-flags 'elso-hiba front-warn
                 'elso-verzio front-version 'elso-regi front-old 'elso-vesc-hiba front-fault)
             (list 'tc tc-on 'tc-aktiv (tc-active) 'tc-elso tc-front
-                'elso-km/h front-speed)
+                'elso-km/h front-speed 'tc-ikon (tc-icon-on))
 )))
 
-; REPL-ből hívható: (lampa-teszt) - háromszor be- és kikapcsolja a lámpát, és
-; kiírja a lámpa láb visszaolvasott szintjét (a hátsó vezérlő headlight-pin
-; lába, vagy headlight-on-front esetén az első vezérlő jelentése), a végén
-; pedig, mire lehet következtetni (README: "A lámpa nem működik").
+(defun pin-label (p) ; a láb neve a konzolra, a csatlakozó felirata szerint
+    (cond
+        ((eq p 'pin-swclk) "SWCLK")
+        ((eq p 'pin-swdio) "SWDIO")
+        ((eq p 'pin-ppm) "PPM")
+        (t (sym2str p))))
+
+; Egy lámpa láb eredménye a (lampa-teszt) végén.
+(defun lamp-verdict (pin hi ons lo offs)
+    (str-merge (pin-label pin)
+        (cond
+            ((and (= hi ons) (= lo offs)) " rendben kapcsol")
+            ((= hi 0) " bekapcsolva sem megy magasra")
+            (t " bizonytalanul kapcsol"))))
+
+; REPL-ből hívható: (lampa-teszt) - hatszor be- és kikapcsolja a lámpát (2 s-onként,
+; bekapcsoláskor egy sípolás), és kiírja a lámpa lábak visszaolvasott szintjét (a
+; hátsó vezérlő headlight-pin és headlight-pin2 lába, vagy headlight-on-front esetén
+; az első vezérlő jelentése), a végén pedig, mire lehet következtetni (README: "A
+; lámpa nem működik"). A kijelző lámpája és ikonja is vele villog.
 ; A lámpát a vezérlőszál kapcsolja (legfeljebb 0,1 s), itt csak a lámpát állítjuk.
 (defun lampa-teszt () {
         (var orig light)
         (var follow 0) ; hányszor követte az első a parancsot
         (var ons 0)    ; bekapcsolt lépések
-        (var pinhi 0)  ; ezek közül hányszor volt magas a láb
+        (var hi1 0)    ; ezek közül hányszor volt magas a láb (1 = headlight-pin, 2 = headlight-pin2)
+        (var hi2 0)
         (var offs 0)
-        (var pinlo 0)
+        (var lo1 0)
+        (var lo2 0)
+        (var two (and (not headlight-on-front) headlight-pin2))
         (print (if headlight-on-front
                 (str-merge "A lampa az elso vezerlo PPM laban van. Elso script verzio: "
                     (str-from-n front-version "%d")
                     (if (< front-version front-min-version)
                         " -> REGI vagy nem valaszol: toltsd fel az uj elso_vezerlo.lisp-et az elso vezerlore!"
                         " (rendben)"))
-                "A lampa a hatso vezerlo headlight-pin laban van (alap: SWD csatlakozo, SWCLK)."))
-        (looprange i 0 6 {
+                (str-merge "A lampa a hatso vezerlo labain van: " (pin-label headlight-pin)
+                    (if two (str-merge " es " (pin-label headlight-pin2)) "")
+                    ", mod " (sym2str headlight-mode)
+                    ". Kozben merd a lab es a GND kozott: BE kb. 3,3 V (od modban 5 V), KI 0 V.")))
+        (print "6x BE/KI 2 s-onkent, bekapcsolaskor egy sipolas. A kijelzo lampaja is vele villog.")
+        (looprange i 0 12 {
                 (setq light (not light))
+                (if light (setq beep-count 1))
                 (sleep 0.5)
-                (var lvl (if headlight-on-front front-pin (gpio-read headlight-pin)))
+                (var l1 (if headlight-on-front front-pin (gpio-read headlight-pin)))
+                (var l2 (if two (gpio-read headlight-pin2) -1))
                 (if (eq front-lamp light) (setq follow (+ follow 1)))
                 (if light
                     {
                         (setq ons (+ ons 1))
-                        (if (= lvl 1) (setq pinhi (+ pinhi 1)))
+                        (if (= l1 1) (setq hi1 (+ hi1 1)))
+                        (if (= l2 1) (setq hi2 (+ hi2 1)))
                     }
                     {
                         (setq offs (+ offs 1))
-                        (if (= lvl 0) (setq pinlo (+ pinlo 1)))
+                        (if (= l1 0) (setq lo1 (+ lo1 1)))
+                        (if (= l2 0) (setq lo2 (+ lo2 1)))
                     })
-                (print (str-merge "lampa " (if light "BE" "KI") " -> lab " (str-from-n lvl "%d")
+                (print (str-merge "lampa " (if light "BE" "KI") " -> lab " (str-from-n l1 "%d")
+                        (if two (str-merge ", masik lab " (str-from-n l2 "%d")) "")
                         (if headlight-on-front
                             (str-merge ", elso vezerlo parancs " (if front-lamp "BE" "KI")
                                 ", utolso valasz " (str-from-n (secs-since front-ack-time) "%.2f") " s")
                             "")))
-                (sleep 1.0)
+                (sleep 1.5)
         })
         (setq light orig)
-        (print (cond
-                ((not headlight-on-front)
-                    (cond
-                        ((and (= pinhi ons) (= pinlo offs))
-                            "EREDMENY: a hatso vezerlo lampa laba rendben kapcsol. Ha a lampa nem villogott, merd az SWD csatlakozon az SWCLK es a GND kozott (BE: kb. 3,3 V). Van fesz: a MOSFET, a bekotes vagy a lampa tapja a hibas.")
-                        ((= pinhi 0)
-                            "EREDMENY: a lab bekapcsolva sem megy magasra. Huzd le a lampa vezeteket es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos.")
-                        (t "EREDMENY: a lab bizonytalanul kapcsol (laza erintkezes, tulterheles?).")))
-                ((< front-version front-min-version)
-                    "EREDMENY: az elso vezerlo nem valaszol, vagy regi script fut rajta.")
-                ((< follow 6)
-                    "EREDMENY: az elso vezerlo nem koveti a lampa parancsot (CAN kapcsolat, script).")
-                ((= pinhi ons)
-                    "EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol. Ha a lampa nem eg: futtasd az elso vezerlon is a (lampa-teszt)-et, es merd a PPM csatlakozon a feszultseget (README).")
-                (t "EREDMENY: az elso vezerlo laba nem megy magasra (zarlatos MOSFET vagy serult lab). Futtasd az elso vezerlon a (lampa-teszt)-et lehuzott lampa vezetekkel.")))
+        (if headlight-on-front
+            (print (cond
+                    ((< front-version front-min-version)
+                        "EREDMENY: az elso vezerlo nem valaszol, vagy regi script fut rajta.")
+                    ((< follow 12)
+                        "EREDMENY: az elso vezerlo nem koveti a lampa parancsot (CAN kapcsolat, script).")
+                    ((= hi1 ons)
+                        "EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol. Ha a lampa nem eg: futtasd az elso vezerlon is a (lampa-teszt)-et, es merd a PPM csatlakozon a feszultseget (README).")
+                    (t "EREDMENY: az elso vezerlo laba nem megy magasra (zarlatos MOSFET vagy serult lab). Futtasd az elso vezerlon a (lampa-teszt)-et lehuzott lampa vezetekkel.")))
+            {
+                (print (str-merge "EREDMENY: " (lamp-verdict headlight-pin hi1 ons lo1 offs)
+                        (if two (str-merge ", " (lamp-verdict headlight-pin2 hi2 ons lo2 offs)) "")))
+                (print (cond
+                        ((or (and (= hi1 ons) (= lo1 offs)) (and two (= hi2 ons) (= lo2 offs)))
+                            "-> A vezerlo oldala jo. Ha a lampa megsem villogott: merd a MOSFET gate es a GND kozott. Ott sincs fesz: rossz labon van a vezetek (az SWD csatlakozon a 3,3 V, GND, NRST nem jo) vagy szakadt. Van fesz, megsem kapcsol: a MOSFET 3,3 V-tal nem nyit ki (headlight-mode 'pin-mode-od + 1 kOhm 5 V-ra, vagy logikai szintu MOSFET), vagy a lampa tapjanak a GND-je nincs osszekotve a VESC GND-vel.")
+                        ((eq headlight-mode 'pin-mode-od)
+                            "-> Nyitott drain modban a labat egy 1 kOhm-os ellenallas huzza 5 V-ra: ez hianyzik, vagy a gate-et GND-re huzo ellenallas tul kicsi.")
+                        ((= hi1 0)
+                            "-> Huzd le a lampa vezeteket es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos, vagy tul kicsi ellenallas huzza GND-re.")
+                        (t "-> Laza erintkezes vagy tulterheles?")))
+            })
+})
+
+; REPL-ből hívható: (ikon-teszt) - 3 s-onként más értéket küld a kijelzőnek, a
+; lépés száma a sebesség helyén látszik. Figyeld, melyik lépésnél gyullad ki a
+; Bluetooth ikon (-> tc-icon-field, tc-icon-bit) és a kijelző lámpája
+; (-> dash-light-value). A lámpa mezőt lecseréli, a mód mezőhöz hozzáadja a bitet.
+(defun ikon-teszt () {
+        (var n 0)
+        (print "Ikon teszt: 3 s-onkent uj ertek, a lepes szama a sebesseg helyen latszik.")
+        (loopforeach c '((2 1) (2 2) (2 4) (2 8) (2 16) (2 32) (2 64) (2 128) (2 100) (2 255)
+                         (0 8) (0 32) (0 64) (0 128)) {
+                (setq n (+ n 1))
+                (print (str-merge (str-from-n n "%d") ". lepes: "
+                        (if (= (ix c 0) 2)
+                            (str-merge "lampa mezo = " (str-from-n (ix c 1) "%d")
+                                "  (BT ikon: tc-icon-field 2, tc-icon-bit " (str-from-n (ix c 1) "%d")
+                                "; lampa: dash-light-value " (str-from-n (ix c 1) "%d") ")")
+                            (str-merge "mod mezo + " (str-from-n (ix c 1) "%d")
+                                "  (tc-icon-field 0, tc-icon-bit " (str-from-n (ix c 1) "%d") ")"))))
+                (setq dash-test-step n)
+                (setq dash-test-or (= (ix c 0) 0))
+                (setq dash-test-value (ix c 1))
+                (setq dash-test-field (ix c 0))
+                (sleep 3.0)
+        })
+        (setq dash-test-field -1)
+        (setq dash-test-step -1)
+        (print "Ikon teszt vege. A Bluetooth ikon lepesenek ertekeit ird a tc-icon-field / tc-icon-bit sorba, a lampaet a dash-light-value sorba.")
 })
 
 (defun init () {
@@ -742,10 +855,8 @@
 
         (gpio-configure 'pin-ppm 'pin-mode-out)     ; féklámpa
         (gpio-write 'pin-ppm 1)
-        (if (not headlight-on-front) {               ; első lámpa a hátsó vezérlő lábán
-                (gpio-configure headlight-pin 'pin-mode-out)
-                (gpio-write headlight-pin (if light 1 0))
-        })
+        (lamp-config)                                ; első lámpa a hátsó vezérlő lábain
+        (lamp-write (if light 1 0))
 
         ; uart-read-bytes az olvasott bájtok után egy 0-t is ír, ezért +1 hely kell
         (def rx-one (bufcreate 2))

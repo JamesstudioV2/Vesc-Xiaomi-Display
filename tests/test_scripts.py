@@ -398,7 +398,7 @@ class ButtonTests(unittest.TestCase):
 
     def test_button_pin_is_configurable(self):
         r = Rear()
-        r.i.set("button-pin", "pin-adc1")
+        r.i.set("button-pin", Symbol("pin-adc1"))
         r.v.gpio_in["pin-adc1"] = 1
         r.i.call("boot")
         r.boot_p1()

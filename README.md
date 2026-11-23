@@ -39,7 +39,7 @@ Tool-ban beállított motoráram- és akkuáram-limitek maradnak érvényben.
 
 **Kijelző gomb (a kijelzőben, zöld vezeték → RX):**
 - 1x nyomás: lámpa ki/be. Egyszerre kapcsol a kijelző saját lámpája, a lámpa
-  ikon és a külső lámpa (a hátsó vezérlő SWD csatlakozójának SWCLK lába).
+  ikon és a külső lámpa (a hátsó vezérlő SWD csatlakozójának SWCLK és SWDIO lába).
 - 2x gyors nyomás: módváltás **D → S → ECO → D**, 1 sípolással.
 - 3x gyors nyomás: **kipörgésgátló** be/ki, 3 sípolással (csak a 2-es
   profilban, az 1-esben nem csinál semmit).
@@ -55,13 +55,15 @@ első vezérlő áram-szorzóján keresztül hat, így a VESC Tool ADC beállít
 (görbe, rámpa) változatlanul érvényesek.
 Induláskor mindig bekapcsolva indul. A hangoláshoz a `(tc-teszt)` konzolparancs
 10 s-ig kiírja a két kerék sebességét és a szorzókat.
+Amíg be van kapcsolva (2-es profilban), a kijelzőn a **Bluetooth ikon** világít,
+ld. [A Bluetooth ikon](#a-bluetooth-ikon-kipörgésgátló-jelzés).
 
 **Féklámpa (PPM kimenet):** folyamatosan világít. Fékezéskor azonnal kialszik,
 majd 5 Hz-cel villog, amíg a fékkar be van húzva.
 
 **Kijelzőn:** sebesség (km/h), akku töltöttség, mód (ECO/D/S), hőfok ikon
-(vezérlő ≥ 80 °C vagy motor ≥ 100 °C, mindkét vezérlőt figyeli), lámpa ikon és
-hibakód. A kijelző saját lámpáját a lámpa mező 6-os bitje kapcsolja: a script a
+(vezérlő ≥ 80 °C vagy motor ≥ 100 °C, mindkét vezérlőt figyeli), lámpa ikon,
+Bluetooth ikon = kipörgésgátló bekapcsolva (2-es profil), és hibakód. A kijelző saját lámpáját a lámpa mező 6-os bitje kapcsolja: a script a
 gyári vezérlőhöz hasonlóan 100-at (0x64) küld (`dash-light-value`). A korábbi
 1-es érték csak az ikont gyújtotta ki.
 
@@ -100,14 +102,22 @@ induláskor, a script elindulása előtt az ADC app ne lebegő bemenetet olvasso
 | Vezérlő, láb | Fogyasztó |
 |---|---|
 | hátsó, PPM jel (servo) | féklámpa MOSFET gate |
-| hátsó, **SWD csatlakozó SWCLK** lába | külső (első) lámpa MOSFET gate |
+| hátsó, **SWD csatlakozó SWCLK** (vagy SWDIO) lába | külső (első) lámpa MOSFET gate |
 
-A hátsó SWD csatlakozón általában 3.3V, SWDIO, SWCLK és GND van. A MOSFET
-gate-je az **SWCLK**-ra kerül, a source a GND-re. Ez közvetlen processzorláb, 3,3
-V-os jellel. Induláskor a processzor ezt a lábat lehúzza, így a lámpa a VESC
-bootolása alatt sem villan fel (az SWDIO-t felhúzza, ezért az kevésbé jó). Az
-SWD programozó a script indulása után újraindításig nem működik, a VESC Tool
-USB-n igen.
+A hátsó SWD csatlakozón általában 3.3V, SWDIO, SWCLK és GND van (néhol NRST
+is). A script **mindkét jellábra (SWCLK és SWDIO) kiadja a lámpa jelét**, mert a
+feliratok lapról lapra eltérnek: a MOSFET gate-je bármelyikre kerülhet, a source a
+GND-re. Az SWCLK a jobb: induláskor a processzor lehúzza, így a lámpa a VESC
+bootolása alatt sem villan fel (az SWDIO-t felhúzza). A **3.3V, GND és NRST lábon
+nem működik**. Ezek közvetlen processzorlábak, 3,3 V-os jellel. Az SWD programozó
+a script indulása után újraindításig nem működik, a VESC Tool USB-n igen.
+
+**Ha a MOSFET 3,3 V-tal nem nyit ki** (nem logikai szintű, pl. IRF520/IRF540-es
+modul, IRFZ44N): `(def headlight-mode 'pin-mode-od)`, és egy **1 kΩ-os
+ellenállás az SWCLK és az 5V közé**. Ekkor a láb nyitott drainként működik, a gate
+bekapcsolt lámpánál 5 V-ot kap (az SWD lábak 5 V-tűrők). Hátránya, hogy
+bootoláskor, a script indulásáig a lámpa világít. Jobb megoldás egy logikai szintű
+MOSFET (ld. lent).
 
 **Miért nem az ADC2-n vagy az első vezérlő PPM lábán van a lámpa?** Az ADC
 bemenetek elé sok lapon védő- és szűrőkör kerül (soros ellenállás, osztó,
@@ -251,19 +261,35 @@ hátsótól kapott lámpa mező alapján) és a **külső lámpa** (MOSFET). Az 
 mindkettőtől függetlenül kigyullad. A külső lámpa alapból a **hátsó vezérlő
 SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
 
-1. **Kijelző lámpája:** a scriptnek 100-at kell küldenie (`dash-light-value`).
-   Ha a régi script fut még, csak az ikon gyullad ki: töltsd fel újra a hátsó
-   scriptet.
-2. **Külső lámpa, hátsó vezérlő konzolja:** `(lampa-teszt)`. Háromszor be- és
-   kikapcsolja a lámpát, kiírja a láb visszaolvasott szintjét (`lab`), a végén
-   pedig egy `EREDMENY:` sort. Közben **mérd multiméterrel az SWD csatlakozón
-   az SWCLK és a GND között** a feszültséget:
+1. **Kijelző lámpája:** a script a gyári vezérlő értékét, 100-at (0x64) küldi
+   (`dash-light-value`). Ha nem gyullad ki, futtasd a hátsó vezérlőn az
+   `(ikon-teszt)`-et: 3 s-onként más értéket küld a lámpa mezőben, a lépés száma a
+   sebesség helyén látszik. A 7. (64) és a 9. (100) lépésnél kellene égnie.
+   - Valamelyik lépésnél kigyullad: azt az értéket írd a `dash-light-value` sorba.
+   - Egyiknél sem, de az ikon kigyullad: a kijelző kapcsolna, a lámpa nem kap
+     elég tápot. A kijelző lámpája a kijelző tápjáról (a piros vezeték, a VESC
+     5V-ja) ég: mérd a piros és a fekete vezeték között **bekapcsolt lámpával**,
+     legalább 4,5 V kell (a 3.3V-ra kötött kijelző működik, de a lámpája nem).
+     Ha leesik, a VESC 5 V-os kimenete gyenge: a kijelzőt külön 5 V-os
+     step-downról járasd (közös GND). Ellenőrizd a lámpa csatlakozóját a kijelzőben.
+2. **Külső lámpa, hátsó vezérlő konzolja:** `(lampa-teszt)`. Hatszor be- és
+   kikapcsolja a lámpát (2 s-onként, minden bekapcsolásnál egy sípolás), kiírja
+   mindkét SWD láb visszaolvasott szintjét (`lab`, `masik lab`), a végén pedig egy
+   `EREDMENY:` sort. Közben **mérd multiméterrel a MOSFET gate (a vezeték vége) és
+   a GND között** a feszültséget:
 
    | Eredmény és mérés | Ok | Teendő |
    |---|---|---|
-   | `rendben kapcsol`, BE-nél ~3,3 V, KI-nél 0 V, a lámpa mégsem ég | a jel kijut, a hiba utána van | logikai szintű N-FET? a gate az SWCLK-n? a source a GND-n? közös a GND a lámpa tápjával? van tápja a lámpának? |
-   | `rendben kapcsol`, de a csatlakozón nincs feszültség | rossz láb, vagy a csatlakozó nincs a lapra forrasztva | ellenőrizd a csatlakozó lábkiosztását (a lap leírása vagy a nyákon a felirat) |
-   | `bekapcsolva sem megy magasra` | valami lehúzza a lábat | húzd le a lámpa vezetékét, és futtasd újra: ha úgy jó, a MOSFET gate zárlatos |
+   | `rendben kapcsol`, a gate-en BE-nél ~3,3 V, KI-nél 0 V, a lámpa mégsem ég | a jel kijut, a MOSFET nem kapcsol | a MOSFET 3,3 V-tal nem nyit ki (ha 5 V-tal próbáltad ki, az erre nem bizonyíték): logikai szintű MOSFET, vagy `headlight-mode 'pin-mode-od` + 1 kΩ 5V-ra. Közös a GND a lámpa tápjával? |
+   | `rendben kapcsol`, de a gate-en nincs feszültség | a vezeték nem az SWCLK/SWDIO lábon van | mérd végig a csatlakozó lábait a GND-hez: a teszt alatt az a kettő vált 0 és 3,3 V között, amelyikre kötni kell |
+   | `bekapcsolva sem megy magasra` | valami lehúzza a lábat | húzd le a lámpa vezetékét, és futtasd újra: ha úgy jó, a MOSFET gate zárlatos, vagy túl kicsi ellenállás húzza GND-re |
+
+   **Csere-próba (1 perc, eldönti, hol a hiba):** kösd a lámpa MOSFET-jének
+   jelvezetékét ideiglenesen a féklámpáé helyett a hátsó **PPM jel** lábára (ami
+   bizonyítottan működik). Ez fékezés nélkül folyamatosan 3,3 V-ot ad. Ha a lámpa
+   így ég, a modul, a lámpa és a tápja jó, a hiba az SWD bekötésben van (rossz láb,
+   vezeték). Ha így sem ég, a hiba a lámpa ágában van (a modul 3,3 V-tal nem nyit
+   ki, a lámpa tápja vagy a GND hiányzik), nem a vezérlőben.
 
 3. **Ha a lámpát az első vezérlő PPM lábára kötöd** (`(def headlight-on-front t)`):
    a hátsó `(lampa-teszt)`-je az első vezérlő visszajelzését írja ki (`elso
@@ -278,6 +304,25 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
 | 60 | az első vezérlő válaszol, de **régi scripttel**: töltsd fel az új `elso_vezerlo.lisp`-et (enélkül nincs külső lámpa és kipörgésgátló) |
 | egyéb | VESC hibakód (`get-fault`), pl. 1 = túlfeszültség, 2 = alacsony feszültség, 3 = DRV, 4 = abs. túláram, 5 = FET túlmelegedés, 6 = motor túlmelegedés |
 
+### A Bluetooth ikon (kipörgésgátló jelzés)
+
+A 2-es profilban, amíg a kipörgésgátló be van kapcsolva, a script egy bitet
+küld a kijelzőnek (`tc-icon-field` = mező, `tc-icon-bit` = bit; alapból a lámpa
+mező 2-es bitje). A gyári rendszerben a Bluetooth ikont a kijelző saját BLE
+modulja kapcsolja (telefon csatlakozásakor), a vezérlő → kijelző üzenetben a
+bitje **sehol nincs dokumentálva**. Ha nem a Bluetooth ikon gyullad ki:
+
+1. Hátsó vezérlő Lisp konzol: `(ikon-teszt)`. 14 lépés, 3 s-onként, a lépés
+   száma a sebesség helyén látszik, a konzol kiírja, mit küld.
+2. Amelyik lépésnél a Bluetooth ikon kigyullad, a konzol sorában lévő
+   `tc-icon-field` és `tc-icon-bit` értéket írd a script elejére.
+3. Ha egyik lépésnél sem: ez a kijelző a Bluetooth ikont nem engedi a vezérlőnek.
+   Ilyenkor egy másik ikon jelezhet (a teszt kiírja, mi gyulladt ki), vagy
+   `(def tc-icon-field -1)` = nincs jelzés.
+
+Ha a választott bit a lámpa mezőben van, ellenőrizd, hogy bekapcsolt
+kipörgésgátló mellett a lámpa is rendesen kapcsol-e.
+
 ## Első próba (felemelt kerékkel)
 
 1. Bekapcsolás után 1 sípolás. A kijelzőn az akku % és a D mód látszik, a
@@ -286,7 +331,7 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
    hátsó kereket 3 km/h fölé, ekkor a gáz működik.
 3. Fékkar: a féklámpa villog, a motor fékez.
 4. Gomb 1x: a kijelző lámpája, a külső lámpa (hátsó SWD / SWCLK) és a lámpa ikon bekapcsol. Gomb
-   2x: a mód S lesz, 1 sípolással.
+   2x: a mód S lesz, 1 sípolással. Ha a lámpa nem ég: `(lampa-teszt)` és `(ikon-teszt)`.
 5. Kikapcsolás, majd bekapcsolás nyomva tartott gázzal: 2 sípolás. Amíg nyomod a
    gázt, semmi nem történik. Elengedés után a gáz álló helyzetből is működik, és
    mindkét motor hajt. Álló helyzetben a kijelző az akku %-ot mutatja.
@@ -296,7 +341,8 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
    meg kézzel a **hátsó** kereket. A `(tc-teszt)` kiírásában az első kerék
    szorzója 1 alá esik, az első motor visszavesz. (Ha az elsőt fogod meg, nem
    történik semmi: a hátsóba a kipörgésgátló nem avatkozik bele.) Gomb 3x: 3
-   sípolás, a kipörgésgátló kikapcsol, ugyanettől a próbától már nem vesz vissza.
+   sípolás, a kipörgésgátló kikapcsol (a Bluetooth ikon kialszik), ugyanettől a
+   próbától már nem vesz vissza.
 
 ## Beállítható paraméterek
 
@@ -306,11 +352,16 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   korlátai `(km/h watt fázisáram-szorzó)` formában.
 - `boot-mode`: induló mód (1 = D, 2 = ECO, 4 = S).
 - `light-default`: az első lámpa induláskor be legyen-e kapcsolva.
-- `headlight-on-front`, `headlight-pin`: a külső lámpa a hátsó vezérlő
-  `headlight-pin` lábán (alapból `'pin-swclk`, az SWD csatlakozó), vagy
-  `headlight-on-front t` esetén az első vezérlő PPM lábán (CAN-en kapcsolva).
+- `headlight-on-front`, `headlight-pin`, `headlight-pin2`: a külső lámpa a hátsó
+  vezérlő `headlight-pin` (alapból `'pin-swclk`) és `headlight-pin2` (alapból
+  `'pin-swdio`, `nil` = nincs) lábán, az SWD csatlakozón; vagy `headlight-on-front
+  t` esetén az első vezérlő PPM lábán (CAN-en kapcsolva).
+- `headlight-mode`: `'pin-mode-out` (3,3 V-os kimenet) vagy `'pin-mode-od`
+  (nyitott drain, 1 kΩ felhúzóval az 5V-ra: 5 V-os gate-jel).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
   is ég, 1 = csak az ikon).
+- `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése (Bluetooth ikon) a
+  kijelzőn; -1 = nincs. Megkeresése: `(ikon-teszt)`.
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
   állapota, mennyivel foroghat az első kerék gyorsabban a hátsónál (km/h), az a
   további különbség, amelynél az első hajtása nullára csökken (km/h), és a
