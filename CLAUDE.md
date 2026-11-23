@@ -53,6 +53,10 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   „Parameter not recognized” hibát dob, ami a hívó szálat leállítja. Ilyet csak `conf-try` / `conf-set-try`
   (trap + alapérték) használhat. A `tools/fw7_00_symbols.txt` a kiadott 7.00-ból van generálva, a szimulátor
   (`NEWER_PARAMS`) alapból a kiadottat utánozza, és UART-indítás nélkül nem enged UART-ot.
+- **Névszabály:** `ext-` kezdetű nevet TILOS definiálni (def/defun/var/paraméter): a LispBM olvasó minden ilyen
+  szimbólumot a kiterjesztés-táblába tesz (natív könyvtáraknak), és a definiálás betöltéskor „Cannot redefine
+  built-in” hibával leállítja az egész scriptet. A `tools/lisp_check.py` és a szimulátor ezt (és a beépített nevek
+  felüldefiniálását, a `@const-start` utáni felső szintű `def`-et) hibának jelzi.
 - Indulás: `boot` = `init` (motorkimenet tiltás, féklámpa, pufferek, **kijelző UART + rx szál elsőként**) + `init-rest`
   (ADC TC, gáz-kalibráció, mód, CAN), mindkettő `trap`-ben, hiba esetén `hiba-init...` a konzolon.
   Balance ágon: a fékkar kalibrációja (`adc-v2-*`) `conf-try`-jal, a kiadott firmware-en a gázkaré (`adc-v1-*`)
@@ -139,6 +143,12 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   `conf-set-try`, a kijelző UART elsőként indul, `boot` trap-pel; a szimbólumlista és a szimulátor a kiadott 7.00-t
   követi; regressziós teszt (a régi script a szimulátorban 0 kijelzőválaszt ad, az új rendben). 94 teszt a main-en.
   A VESC Tool-ban az ADC Traction Control legyen kikapcsolva (a kiadott firmware-en a script nem tudja).
+
+- 2026-11-23 (2): A felhasználó képernyőképe (AB ág, hátsó): `Cannot redefine built-in` a `(define ext-roll ...)`
+  sornál ("Parsing 63999 characters" = a legutóbbi AB hátsó script). Ok: az `ext-` előtag (ld. Névszabály).
+  A Balance és az AB hátsó scriptjében `ext-roll/pitch/rate/cnt/time` -> `imu-...`, `bal-ext-rate` -> `bal-imu-rate`.
+  A main-en nem volt ilyen név. Az ellenőrző és a szimulátor kiegészítve; a régi scriptek a szimulátorban
+  ugyanazzal a hibával állnak meg, mint a valódi firmware-en.
 
 ## Következő lépések
 1. Lámpa: visszajelzés kell az új scriptekkel (mindkét vezérlőre fel kell tölteni!), ha nem megy:
