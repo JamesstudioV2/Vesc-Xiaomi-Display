@@ -7,11 +7,32 @@ out-of-range value into a byte buffer, indexing past the end of a buffer)
 raise an error here instead of being silently accepted.
 """
 import math
+import os
 import re
 
 
 class Symbol(str):
     pass
+
+
+def _firmware_functions():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "fw7_00_symbols.txt")
+    with open(path, encoding="utf-8") as f:
+        return {line[2:].strip().lower() for line in f if line.startswith("F ")}
+
+
+FIRMWARE_FUNCS = _firmware_functions()
+
+
+def check_bindable(name):
+    """A valódi LispBM-ben nem köthető nevek: az "ext-" kezdetűeket az olvasó a
+    kiterjesztés-táblába teszi, a firmware függvényei pedig beépítettek. Mindkettő
+    "Cannot redefine built-in" hibát ad (def, defun, var és paraméter is)."""
+    n = str(name).lower()
+    if n.startswith("ext-"):
+        raise LispError("eval_error: Cannot redefine built-in: %s (ext- prefix)" % name)
+    if n in FIRMWARE_FUNCS:
+        raise LispError("eval_error: Cannot redefine built-in: %s" % name)
 
 
 class LString(str):
@@ -319,16 +340,21 @@ class Interp:
         return res
 
     def f_var(self, x, env):
+        check_bindable(x[1])
         env.vars[x[1]] = self.eval(x[2], env)
         return env.vars[x[1]]
 
     def f_def(self, x, env):
+        check_bindable(x[1])
         self.g.vars[x[1]] = self.eval(x[2], env)
         return self.g.vars[x[1]]
 
     def f_defun(self, x, env):
         if len(x) != 4:
             raise LispError("defun %s must have exactly one body form" % x[1])
+        check_bindable(x[1])
+        for prm in x[2]:
+            check_bindable(prm)
         self.g.vars[x[1]] = Closure(x[1], list(x[2]), x[3], self.g)
         return self.g.vars[x[1]]
 

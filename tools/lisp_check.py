@@ -2,6 +2,12 @@
 """Static checker for the LispBM scripts in this repo.
 
 It does not run the code. It checks:
+  * no defined name starts with "ext-": the LispBM reader puts every such
+    symbol into the extension table (reserved for native libraries), and a
+    (def ext-... ) then fails with "Cannot redefine built-in" at load time,
+  * no defined name shadows a firmware function (same error),
+  * no top-level def/define inside @const-start ... @const-end (it would be
+    stored in flash as a constant),
   * balanced (), {} and [] (strings and ; comments are skipped),
   * every symbol is either defined in the file (def/define/defun/var/
     parameters/loop variables/recv pattern variables) or exists in
@@ -237,6 +243,19 @@ def main(argv):
         for name in sorted(defs):
             if name.lower() in fw_lower:  # LispBM symbols are case-insensitive
                 errors.append("%s: '%s' shadows a firmware function" % (path, name))
+            if name.lower().startswith("ext-"):
+                errors.append("%s: '%s' starts with 'ext-': the reader makes it an extension "
+                              "symbol, defining it fails with 'Cannot redefine built-in'" % (path, name))
+        in_const = False
+        for node in forms:
+            a = atom_name(node)
+            if a == "@const-start":
+                in_const = True
+            elif a == "@const-end":
+                in_const = False
+            elif in_const and node[0] == "list" and node[1] and atom_name(node[1][0]) in ("def", "define"):
+                errors.append("%s:%d: top-level '%s' inside @const-start: it becomes a flash constant"
+                              % (path, node[2], atom_name(node[1][1]) if len(node[1]) > 1 else "?"))
         check_uses(forms, defs, funcs, consts, errors, path)
         for e in errors:
             print(e)
