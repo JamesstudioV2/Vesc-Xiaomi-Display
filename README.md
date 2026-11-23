@@ -259,17 +259,39 @@ lábán (MOSFET). Az ikon mindkettőtől függetlenül kigyullad.
    Ha a régi script fut még, csak az ikon gyullad ki: töltsd fel újra a hátsó
    scriptet.
 2. **Külső lámpa, hátsó vezérlő konzolja:** `(lampa-teszt)`. Háromszor be- és
-   kikapcsolja a lámpát, és kiírja, mit jelez vissza az első vezérlő:
+   kikapcsolja a lámpát, soronként kiírja, mit jelez vissza az első vezérlő
+   (`parancs` = megkapta-e, `lab` = az első vezérlő lámpa lábának visszaolvasott
+   szintje), a végén pedig egy `EREDMENY:` sort:
 
-   | Amit látsz | Ok, teendő |
+   | `EREDMENY:` | Teendő |
    |---|---|
-   | `Elso script verzio: 0` vagy `1 ... REGI` | az első vezérlőn régi script fut, vagy nem válaszol: töltsd fel az új `lisp/elso_vezerlo.lisp`-et az **első** vezérlőre (a kijelzőn ilyenkor 60-as vagy 50-es hiba) |
-   | a `parancs` követi a BE/KI-t, a `lab 1` BE-nél | a jel kijut a PPM lábra: a bekötés vagy a MOSFET hibás (logikai szintű FET? gate a PPM **jel** lábán? közös GND?) |
-   | a `parancs` követi, de a `lab 0` BE-nél is | a PPM láb nem tud magas szintre menni: zárlat, túl kicsi gate-ellenállás, vagy az első vezérlőn a Servo Output be van kapcsolva |
+   | az első vezérlő nem válaszol, vagy régi script fut rajta | töltsd fel az új `lisp/elso_vezerlo.lisp`-et az **első** vezérlőre (a kijelzőn 60-as vagy 50-es hiba) |
+   | nem követi a lámpa parancsot | CAN kapcsolat, fut-e az első script (`(status)` az elsőn) |
+   | a parancs eljut, az első vezérlő PPM lába kapcsol | a szoftver rendben van: 3. pont, mérés |
+   | az első vezérlő lába nem megy magasra | 3. pont, lehúzott lámpa vezetékkel |
+
 3. **Közvetlenül az első vezérlőn** (VESC Tool-ban a CAN-listából az első
-   vezérlő, Lisp konzol): `(lampa-teszt)` 5x 1 s-ra bekapcsolja a lámpát, a
-   hátsótól függetlenül. Ha ettől sem világít, a hiba a bekötésben van. Mérd meg
-   a PPM jel lábán a ~3,3 V-ot bekapcsolt állapotban.
+   vezérlő, Lisp konzol): `(lampa-teszt)`. A hátsótól függetlenül 5x 1 s-ra
+   bekapcsolja a lámpa lábat, kiírja az App to Use beállítást (0 = No App
+   legyen; ha 1 vagy 4, a PPM app is ezt a lábat használja) és a végén egy
+   `EREDMENY:` sort. Közben **mérd multiméterrel a PPM csatlakozó jel és GND
+   lába között** a feszültséget:
+
+   | Eredmény és mérés | Ok | Teendő |
+   |---|---|---|
+   | `rendben kapcsol`, a csatlakozón BE-nél ~3,3 V, KI-nél 0 V, a lámpa mégsem ég | a jel kijut, a hiba utána van | logikai szintű N-FET? a gate a **jel** lábon? a source a GND-n? közös a GND a lámpa tápjával? van tápja a lámpának? |
+   | `rendben kapcsol`, de a csatlakozón nincs feszültség | a láb kapcsol, de a jel nem jut ki a csatlakozóig | a nyákon sérült a láb és a csatlakozó közötti út (soros ellenállás, vezeték, forrasztás): használj másik lábat (4. pont) |
+   | `bekapcsolva sem megy magasra` | valami lehúzza a lábat, vagy sérült | húzd le a lámpa vezetékét, és futtasd újra: ha úgy jó, a MOSFET gate zárlatos (cseréld); ha úgy sem, a vezérlő lába sérült (4. pont) |
+
+4. **Másik láb, ha a PPM láb vagy a nyák sérült:**
+   - az első vezérlő **SWD** csatlakozója: az első scriptben
+     `(def light-pin 'pin-swdio)` (vagy `'pin-swclk`), a MOSFET gate-je erre a
+     lábra kerül. Ez közvetlen processzorláb, 3,3 V-os jellel. Az SWD
+     programozó ezután újraindításig nem működik (a VESC Tool USB-n igen).
+   - vagy a hátsó vezérlő SWD lába, CAN nélkül: a hátsó scriptben
+     `(def headlight-on-front nil)` és `(def headlight-pin 'pin-swdio)`.
+   - Az ADC lábak sok lapon nem tudnak MOSFET-et kapcsolni (a bemenet
+     védőköre miatt), ezért azok nem jók erre.
 
 | Kijelző hibakód | Jelentés |
 |---|---|
@@ -415,6 +437,8 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   korlátai `(km/h watt fázisáram-szorzó)` formában.
 - `boot-mode`: induló mód (1 = D, 2 = ECO, 4 = S).
 - `light-default`: az első lámpa induláskor be legyen-e kapcsolva.
+- `headlight-on-front`, `headlight-pin`: a lámpa az első vezérlő lábán (CAN-en
+  kapcsolva) vagy a hátsó vezérlő `headlight-pin` lábán (pl. `'pin-swdio`).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
   is ég, 1 = csak az ikon).
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
