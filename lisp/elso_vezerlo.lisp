@@ -173,7 +173,7 @@
         (gpio-write light-pin (if front-light 1 0))
         (print (cond
                 ((and (= hi 5) (= lo 5))
-                    "EREDMENY: a vezerlo laba rendben kapcsol. Ha a lampa nem villogott, merd a PPM csatlakozo jel es GND laba kozott (BE: kb. 3,3 V). Nincs fesz: a lab es a csatlakozo kozti ut (nyak) serult. Van fesz: MOSFET, bekotes vagy a lampa tapja a hibas.")
+                    "EREDMENY: a vezerlo laba rendben kapcsol. Ha a lampa nem villogott, merd a PPM jel es GND laba kozott (BE: kb. 3,3 V). Nincs fesz: a nyak serult. Van fesz: MOSFET, bekotes vagy a lampa tapja.")
                 ((= hi 0)
                     "EREDMENY: a lab bekapcsolva sem megy magasra. Huzd le a lampa vezeteket, es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos; ha ugy sem, a vezerlo laba serult (hasznald a 'pin-swdio labat).")
                 (t "EREDMENY: a lab bizonytalanul kapcsol (laza erintkezes, tulterheles?).")))
@@ -421,8 +421,8 @@
         (def bno-tx-feat (bufcreate 21))
         (def rvc-one (bufcreate 2))   ; uart-read-bytes: +1 bájt a záró 0-nak
         (def rvc-buf (bufcreate 18))
+        (gpio-write light-pin 0) ; előbb a szint, utána a kimenet mód (ne villanjon)
         (gpio-configure light-pin 'pin-mode-out)
-        (gpio-write light-pin 0)
         (apply-limits 0 0 250 5) ; induláskor tiltva, amíg a hátsó nem szól
         (event-register-handler (spawn event-loop))
         (event-enable 'event-can-sid)

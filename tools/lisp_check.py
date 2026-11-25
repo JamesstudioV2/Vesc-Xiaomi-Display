@@ -9,6 +9,9 @@ It does not run the code. It checks:
   * no top-level def/define inside @const-start ... @const-end (it would be
     stored in flash as a constant),
   * balanced (), {} and [] (strings and ; comments are skipped),
+  * no string literal or symbol longer than 256 bytes: the 7.00 reader
+    (tokpar.c, TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH) stops loading the whole
+    script with "read_error" at a longer one,
   * every symbol is either defined in the file (def/define/defun/var/
     parameters/loop variables/recv pattern variables) or exists in
     VESC firmware 7.00 (LispBM core + VESC extensions),
@@ -29,6 +32,20 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+MAX_TOKEN_LEN = 256   # lispBM/include/tokpar.h, TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH (7.00)
+
+
+def string_len(tok):
+    """Length of a string literal as the reader stores it: UTF-8 bytes, one per escape."""
+    n, esc = 0, False
+    for ch in tok[1:-1]:
+        if esc:
+            n, esc = n + 1, False
+        elif ch == "\\":
+            esc = True
+        else:
+            n += len(ch.encode("utf-8"))
+    return n
 SYMFILE = os.path.join(HERE, "fw7_00_symbols.txt")
 
 
@@ -236,6 +253,11 @@ def main(argv):
         errors = []
         text = open(path, encoding="utf-8").read()
         toks = tokenize(text, errors, path)
+        for kind, val, line in toks:
+            n = string_len(val) if kind == "string" else len(val.encode("utf-8"))
+            if kind in ("string", "atom") and n > MAX_TOKEN_LEN:
+                errors.append("%s:%d: %s of %d bytes: the 7.00 reader allows %d, loading stops "
+                              "with read_error" % (path, line, kind, n, MAX_TOKEN_LEN))
         forms = parse(toks, errors, path)
         defs = set()
         collect_defs(forms, defs)
