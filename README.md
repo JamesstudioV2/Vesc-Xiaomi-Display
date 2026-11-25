@@ -231,6 +231,11 @@ app) van beállítva, a script UART-indítása a firmware-ben véglegesen
 
 Ha nincs első vezérlő, a hátsó script elején legyen `(def front-enabled nil)`.
 
+**Ha a feltöltés hibával áll meg** (a konzolon `Error: read_error` vagy
+`eval_error`, alatta `Line:` / `Column:`), a script egyáltalán nem fut: küldd el a
+képet a sor- és oszlopszámmal. (Példa: a 7.00-s firmware olvasója legfeljebb 256
+karakteres szöveget enged egy idézőjelpár között, a hosszabbnál `read_error`.)
+
 ## Hibakeresés
 
 A Lisp konzolban (REPL) a `(status)` parancs kiírja a profilt, az állapotot, a
@@ -299,6 +304,17 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
    így ég, a modul, a lámpa és a tápja jó, a hiba az SWD bekötésben van (rossz láb,
    vezeték). Ha így sem ég, a hiba a lámpa ágában van (a modul 3,3 V-tal nem nyit
    ki, a lámpa tápja vagy a GND hiányzik), nem a vezérlőben.
+
+   **Induláskor felvillan, a gombra mégsem kapcsol?** A firmware induláskor az
+   SWD lábak kimeneti regiszterét 1-re állítja (`hwconf/board.h`), a lábakat lebegni
+   hagyja (nincs le- vagy felhúzó), és az SWCLK-t egy pillanatra ki is hajtja (a
+   „HALL2 és SWCLK összekötve = gyári beállítások” ellenőrzés). A korábbi script a
+   kimenetre állításkor szintén egy pillanatra magasra vitte a lábat (az új már
+   előbb 0-t ír). A villanás azt mutatja, hogy a vezeték, a MOSFET és a lámpa
+   kapcsolható, **de azt nem, hogy a MOSFET 3,3 V-tal kinyit**: a lebegő gate a
+   lámpa tápjáról 3,3 V fölé is feltöltődhet. Tegyél egy **10 kΩ-os ellenállást a
+   gate és a GND közé**, és nézd meg a `(lampa-teszt)`-et. (Az SWCLK-t soha ne
+   kösd össze a HALL2-vel: attól a VESC induláskor törli a beállításait.)
 
 3. **Ha a lámpát az első vezérlő PPM lábára kötöd** (`(def headlight-on-front t)`):
    a hátsó `(lampa-teszt)`-je az első vezérlő visszajelzését írja ki (`elso

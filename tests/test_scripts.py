@@ -683,3 +683,43 @@ class LoaderRuleTests(unittest.TestCase):
         for path in (REAR, FRONT):
             i = Interp()
             i.load(path)   # hibát dobna, ha egy név "ext-"-tel kezdődne vagy beépített lenne
+
+    def test_string_longer_than_256_is_a_read_error(self):
+        """lispBM tokpar.c (7.00): TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH = 256. A 2026-11-23-i
+        hátsó script egy 387 bájtos szövegnél read_error-ral állt meg a valódi VESC-en."""
+        i = Interp()
+        i.run('(def ok "%s")' % ("x" * 256))
+        self.assertEqual(len(i.get("ok")), 256)
+        with self.assertRaises(Exception) as cm:
+            Interp().run('(print "%s")' % ("x" * 257))
+        self.assertIn("read_error", str(cm.exception))
+        with self.assertRaises(Exception):
+            Interp().run('(print "%s\\n")' % ("x" * 256))   # az escape is egy karakter
+
+    def test_checker_flags_long_strings(self):
+        import subprocess, sys, tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".lisp", delete=False, encoding="utf-8") as f:
+            f.write('(print "%s")\n' % ("y" * 300))
+            bad = f.name
+        try:
+            r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "lisp_check.py"), bad],
+                               capture_output=True, text=True)
+        finally:
+            os.unlink(bad)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("read_error", r.stdout)
+
+    def test_all_strings_fit_the_reader(self):
+        from lbm_sim import TOKEN, token_len, MAX_TOKEN_LEN
+        for path in (REAR, FRONT):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            longest = 0
+            pos = 0
+            while pos < len(text):
+                m = TOKEN.match(text, pos)
+                if m.lastgroup == "string":
+                    longest = max(longest, token_len("string", m.group("string")))
+                pos = m.end()
+            self.assertLessEqual(longest, MAX_TOKEN_LEN, path)
+            self.assertGreater(longest, 100, "the scan found the strings")
