@@ -124,12 +124,11 @@ bekapcsolt lámpánál 5 V-ot kap (az SWD lábak 5 V-tűrők). Hátránya, hogy
 bootoláskor, a script indulásáig a lámpa világít. Jobb megoldás egy logikai szintű
 MOSFET (ld. lent).
 
-**Miért nem az ADC2-n vagy az első vezérlő PPM lábán van a lámpa?** Az ADC
+**Miért az SWD csatlakozón van a lámpa?** A hátsó ADC2-n nem működött: az ADC
 bemenetek elé sok lapon védő- és szűrőkör kerül (soros ellenállás, osztó,
 kondenzátor), ezen keresztül a láb nem tud MOSFET gate-et kapcsolni. Az első
-vezérlő PPM lábán a lámpa nem működött (valószínűleg a láb vagy a nyák sérült).
-Ha mégis ott szeretnéd: `(def headlight-on-front t)` a hátsó scriptben, ekkor a
-hátsó CAN-en kéri, az első a PPM lábán kapcsolja.
+vezérlő PPM lábán sem működött. A hátsó SWD csatlakozón működik (2026-11-25), ezért
+az első vezérlőn nincs lámpa, és az első script semmilyen lábhoz nem nyúl.
 
 **Miért ilyen kicsi (470 Ω) a felhúzó?** A kijelző a zöld vezetéket
 nyugalmi állapotban is terheli. Az eredeti projektek 1 kΩ-ot használnak, és a
@@ -204,7 +203,7 @@ app) van beállítva, a script UART-indítása a firmware-ben véglegesen
 
 ### Első vezérlő
 - **App to Use:** `No App`. A parancsokat a hátsó ADC app küldi CAN-en.
-- **Servo Output:** kikapcsolva (ha a lámpát az első PPM lábára teszed, kötelező).
+- **Servo Output:** kikapcsolva (az első vezérlőn nincs lámpa, a PPM láb nem kell).
 - A CAN státuszüzenetek maradjanak bekapcsolva (alapértelmezés), mert ebből látja
   a hátsó vezérlő az első hőmérsékletét és azt, hogy jelen van.
 - A kerékátmérő és a póluspár itt is pontos legyen: a kipörgésgátló az első
@@ -223,7 +222,7 @@ app) van beállítva, a script UART-indítása a firmware-ben véglegesen
    elsőben is ugyanazt állítsd be (`cmd-sid` / `ack-sid`).
 4. **A két scriptet mindig együtt frissítsd.** Az új hátsó script az első
    script 2-es verzióját várja. Régebbi első scriptnél a kijelző **60**-as hibát
-   mutat, és a lámpa és a kipörgésgátló nem működik.
+   mutat, és a kipörgésgátló nem működik.
 
 Ha nincs első vezérlő, a hátsó script elején legyen `(def front-enabled nil)`.
 
@@ -278,7 +277,8 @@ hiba esetén is fut tovább, de a hibát jelezni kell.
 Két külön lámpa van: a **kijelző saját lámpája** (a kijelző kapcsolja a
 hátsótól kapott lámpa mező alapján) és a **külső lámpa** (MOSFET). Az ikon
 mindkettőtől függetlenül kigyullad. A külső lámpa alapból a **hátsó vezérlő
-SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
+SWD csatlakozóján** van (SWCLK és SWDIO, `headlight-pin`, `headlight-pin2`); az
+első vezérlőn nincs lámpa.
 
 1. **Kijelző lámpája:** a script a gyári vezérlő értékét, 100-at (0x64) küldi
    (`dash-light-value`). Ha nem gyullad ki, futtasd a hátsó vezérlőn az
@@ -321,17 +321,10 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
    gate és a GND közé**, és nézd meg a `(lampa-teszt)`-et. (Az SWCLK-t soha ne
    kösd össze a HALL2-vel: attól a VESC induláskor törli a beállításait.)
 
-3. **Ha a lámpát az első vezérlő PPM lábára kötöd** (`(def headlight-on-front t)`):
-   a hátsó `(lampa-teszt)`-je az első vezérlő visszajelzését írja ki (`elso
-   vezerlo parancs` = megkapta-e, `lab` = az első lámpa lábának szintje), az
-   első vezérlő Lisp konzolján pedig a `(lampa-teszt)` közvetlenül kapcsolja
-   a PPM lábat (és kiírja az App to Use beállítást: 0 = No App legyen). Mérés a
-   PPM csatlakozó jel és GND lába között, ugyanúgy, mint fent.
-
 | Kijelző hibakód | Jelentés |
 |---|---|
 | 50 | van első vezérlő a CAN-en, de nem válaszol, vagy nem a kért állapotban van (nincs rajta a script?) |
-| 60 | az első vezérlő válaszol, de **régi scripttel**: töltsd fel az új `elso_vezerlo.lisp`-et (enélkül nincs külső lámpa és kipörgésgátló) |
+| 60 | az első vezérlő válaszol, de **régi scripttel**: töltsd fel az új `elso_vezerlo.lisp`-et (enélkül nincs kipörgésgátló) |
 | egyéb | VESC hibakód (`get-fault`), pl. 1 = túlfeszültség, 2 = alacsony feszültség, 3 = DRV, 4 = abs. túláram, 5 = FET túlmelegedés, 6 = motor túlmelegedés |
 
 ### A kipörgésgátló jelzése a kijelzőn
@@ -490,10 +483,9 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   korlátai `(km/h watt fázisáram-szorzó)` formában.
 - `boot-mode`: induló mód (1 = D, 2 = ECO, 4 = S).
 - `light-default`: az első lámpa induláskor be legyen-e kapcsolva.
-- `headlight-on-front`, `headlight-pin`, `headlight-pin2`: a külső lámpa a hátsó
-  vezérlő `headlight-pin` (alapból `'pin-swclk`) és `headlight-pin2` (alapból
-  `'pin-swdio`, `nil` = nincs) lábán, az SWD csatlakozón; vagy `headlight-on-front
-  t` esetén az első vezérlő PPM lábán (CAN-en kapcsolva).
+- `headlight-pin`, `headlight-pin2`: a külső lámpa lábai a hátsó vezérlő SWD
+  csatlakozóján: `headlight-pin` (alapból `'pin-swclk`) és `headlight-pin2` (alapból
+  `'pin-swdio`, `nil` = nincs). Mindkettő ugyanazt a jelet adja.
 - `headlight-mode`: `'pin-mode-out` (3,3 V-os kimenet) vagy `'pin-mode-od`
   (nyitott drain, 1 kΩ felhúzóval az 5V-ra: 5 V-os gate-jel).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
