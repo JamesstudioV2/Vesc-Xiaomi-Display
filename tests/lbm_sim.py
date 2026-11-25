@@ -63,6 +63,17 @@ FLOAT = re.compile(r"^-?(\d+\.\d*|\.\d+)$")
 
 MAX_TOKEN_LEN = 256   # lispBM tokpar.h (7.00): hosszabb szöveg/szimbólum -> read_error
 
+# lispBM/src/extensions/lbm_dyn_lib.c (7.00): ezeket a makrókat/függvényeket az
+# első használatkor szövegből tölti be, az új paraméterneveket a flash-képbe írja.
+# Az image-save után (futás közben) ez a képbe mentett írási mutatót elavulttá
+# teszi: újraindítás után "Attempted to write to const heap ... already occupied".
+DYN_LIB = {
+    "defun", "defunret", "defmacro", "loopfor", "loopwhile", "looprange", "loopforeach",
+    "loopwhile-thd", "defstruct", "str-merge", "iota", "foldl", "foldr", "zipwith", "zip",
+    "filter", "str-cmp-asc", "str-cmp-dsc", "second", "third", "abs", "create-struct",
+    "is-struct", "accessor-sym", "access-set", "list-to-array", "array-to-list", "array?",
+}
+
 
 def token_len(kind, val):
     if kind != "string":
@@ -283,6 +294,8 @@ class Interp:
             "recv": self.f_recv,
         }
         self.builtins = self.make_builtins()
+        self.image_saved = False   # a betöltés elérte az (image-save)-et
+        self.dyn_loaded = set()    # a már betöltött DYN_LIB nevek
 
     # ---------------------------------------------------------------- loading
     def load(self, path, skip_top=("main", "image-save")):
@@ -292,6 +305,8 @@ class Interp:
             if isinstance(form, Symbol) and form.startswith("@const"):
                 continue
             if isinstance(form, list) and form and form[0] in skip_top and len(form) == 1:
+                if form[0] == "image-save":
+                    self.image_saved = True
                 continue
             self.eval(form, self.g)
 
@@ -329,6 +344,13 @@ class Interp:
             if not x:
                 return None
             head = x[0]
+            if isinstance(head, Symbol) and head in DYN_LIB and head not in self.dyn_loaded:
+                if self.image_saved and env.find(head) is None:
+                    raise LispError(
+                        "'%s' elso hasznalata az image-save utan: a 7.00 ekkor a flash-kepbe ir, "
+                        "ujrainditas utan 'Attempted to write to const heap ... already occupied' "
+                        "(toltsd be az image-save elott)" % head)
+                self.dyn_loaded.add(head)
             if isinstance(head, Symbol) and head in self.special:
                 return self.special[head](x, env)
             f = self.eval(head, env)

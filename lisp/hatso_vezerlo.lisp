@@ -14,7 +14,7 @@
 ;                  SWDIO láb is a lámpa jelét adja)
 ;      2x nyomás = módváltás  D -> S -> ECO -> D
 ;      3x nyomás = kipörgésgátló be/ki (csak 2-es profilban), 3 sípolás;
-;                  bekapcsolt kipörgésgátlónál a kijelzőn a Bluetooth ikon világít
+;                  (jelzés a kijelzőn: tc-icon-field, alapból nincs)
 ;  - PPM láb: féklámpa MOSFET. Alapból folyamatosan világít, fékezéskor villog.
 ;  - Kijelzőn: sebesség, akku töltöttség, mód (ECO/D/S), hőfok ikon, hibakód.
 ;  - 1-es profil (alapértelmezett, "rendőr mód"): csak a hátsó motor megy,
@@ -83,11 +83,13 @@
 (def tc-range 3.0)            ; km/h - e fölött ennyi további különbségnél a hajtás 0
 (def tc-recover 0.3)          ; s - a csúszás után ennyi idő alatt jön vissza a teljes hajtás
 ; Jelzés a kijelzőn: amíg a kipörgésgátló be van kapcsolva (2-es profilban), ez a
-; bit is megy a kijelzőnek (Bluetooth ikon). A Bluetooth ikon bitje sehol nincs
-; dokumentálva (a gyári kijelzőn a saját BLE modulja kapcsolja): ha nem az
-; világít, az (ikon-teszt) megmutatja, melyik mező/bit kell (README).
-(def tc-icon-field 2)         ; 0 = mód, 2 = lámpa mező; -1 = nincs jelzés
-(def tc-icon-bit 2)           ; ezt a bitet kapcsolja be a mezőben
+; bit is megy a kijelzőnek. A Bluetooth ikont a kijelző nem engedi (a saját BLE
+; modulja kapcsolja; az (ikon-teszt) egyik lépésnél sem gyújtotta ki, 2026-11-25),
+; a lámpa mező bármely bitje pedig a lámpa ikont gyújtja ki. Ezért alapból nincs
+; jelzés (a 3x gombos kapcsoláskor 3 sípolás van). Ha egy ikon jelezze: az
+; (ikon-teszt) lépései közül válassz, pl. mód mező (0) + 128 = hőmérő ikon.
+(def tc-icon-field -1)        ; 0 = mód, 2 = lámpa mező; -1 = nincs jelzés
+(def tc-icon-bit 0)           ; ezt a bitet kapcsolja be a mezőben
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -412,7 +414,7 @@
 (defun dash-or (field bits)
     (bufset-u8 tx-frame (+ 6 field) (bitwise-or (bufget-u8 tx-frame (+ 6 field)) bits)))
 
-; A kipörgésgátló jelzése (Bluetooth ikon): a kapcsoló állása 2-es profilban.
+; A kipörgésgátló jelzése (tc-icon-field): a kapcsoló állása 2-es profilban.
 (defun tc-icon-on ()
     (and tc-on (= profile 2) (>= tc-icon-field 0) (<= tc-icon-field 5)))
 
@@ -441,7 +443,7 @@
                 (front-old front-old-error-code)
                 (t 0)))
         (if (< dash-test-field 0)
-            (if (tc-icon-on) (dash-or tc-icon-field tc-icon-bit)) ; kipörgésgátló: Bluetooth ikon
+            (if (tc-icon-on) (dash-or tc-icon-field tc-icon-bit)) ; kipörgésgátló jelzés
             (if dash-test-or ; (ikon-teszt)
                 (dash-or dash-test-field dash-test-value)
                 (bufset-u8 tx-frame (+ 6 dash-test-field) dash-test-value)))
@@ -827,7 +829,7 @@
 
 ; REPL-ből hívható: (ikon-teszt) - 3 s-onként más értéket küld a kijelzőnek, a
 ; lépés száma a sebesség helyén látszik. Figyeld, melyik lépésnél gyullad ki a
-; Bluetooth ikon (-> tc-icon-field, tc-icon-bit) és a kijelző lámpája
+; kipörgésgátló jelzésére választott ikon (-> tc-icon-field, tc-icon-bit) és a kijelző lámpája
 ; (-> dash-light-value). A lámpa mezőt lecseréli, a mód mezőhöz hozzáadja a bitet.
 (defun ikon-teszt () {
         (var n 0)
@@ -838,7 +840,7 @@
                 (print (str-merge (str-from-n n "%d") ". lepes: "
                         (if (= (ix c 0) 2)
                             (str-merge "lampa mezo = " (str-from-n (ix c 1) "%d")
-                                "  (BT ikon: tc-icon-field 2, tc-icon-bit " (str-from-n (ix c 1) "%d")
+                                "  (TC jelzes: tc-icon-field 2, tc-icon-bit " (str-from-n (ix c 1) "%d")
                                 "; lampa: dash-light-value " (str-from-n (ix c 1) "%d") ")")
                             (str-merge "mod mezo + " (str-from-n (ix c 1) "%d")
                                 "  (tc-icon-field 0, tc-icon-bit " (str-from-n (ix c 1) "%d") ")"))))
@@ -850,7 +852,7 @@
         })
         (setq dash-test-field -1)
         (setq dash-test-step -1)
-        (print "Ikon teszt vege. A Bluetooth ikon lepesenek ertekeit ird a tc-icon-field / tc-icon-bit sorba, a lampaet a dash-light-value sorba.")
+        (print "Ikon teszt vege. A kiporgesgatlo jelzesere valasztott ikon lepesenek ertekeit ird a tc-icon-field / tc-icon-bit sorba, a lampaet a dash-light-value sorba.")
 })
 
 (defun init () {
@@ -920,6 +922,20 @@
 })
 
 @const-end
+
+; A LispBM 7.00 a looprange, loopwhile, loopforeach makrót és a str-merge, abs
+; függvényt az első használatkor szövegből tölti be, és az ehhez kellő új neveket
+; (pl. "it", "start") a flash-képbe írja. Ha ez csak futás közben, az image-save
+; után történik, a képbe mentett írási mutató elavul, és egy újraindítás után a
+; következő ilyen betöltés "Attempted to write to const heap ... already occupied"
+; + read_error hibával leállítja az éppen futó szálat (első vezérlő, (lampa-teszt),
+; 2026-11-25). Ezért itt, az image-save előtt mindet betöltjük: így a képbe
+; kerülnek, és futás közben nincs flash-írás.
+(looprange i 0 1 nil)
+(loopwhile nil nil)
+(loopforeach x nil nil)
+(str-merge "")
+(abs 0)
 
 (image-save)
 (main)
