@@ -541,15 +541,29 @@ class RearLampPinTests(unittest.TestCase):
 
 
 class TcIconTests(unittest.TestCase):
-    """Bekapcsolt kipörgésgátló (2-es profil): Bluetooth ikon bit a kijelzőnek."""
+    """Bekapcsolt kipörgésgátló (2-es profil): jelző bit a kijelzőnek (tc-icon-field/-bit).
+    A Bluetooth ikon a felhasználó kijelzőjén nem vezérelhető, ezért alapból nincs jelzés."""
 
-    def p2(self):
+    def p2(self, field=2, bit=2):
         r = Rear()
         r.boot_p2()
         r.thr = IDLE
         r.step(int(0.5 / STEP))
         self.assertEqual(r.g("profile"), 2)
+        r.i.set("tc-icon-field", field)
+        r.i.set("tc-icon-bit", bit)
         return r
+
+    def test_no_indicator_by_default_lamp_icon_free(self):
+        r = Rear()
+        r.boot_p2()
+        r.thr = IDLE
+        r.step(int(0.5 / STEP))
+        self.assertEqual(r.g("tc-icon-field"), -1)
+        self.assertTrue(r.g("tc-on"))
+        self.assertEqual(r.last_dash()[8], 0, "TC on, lamp off: the lamp field stays 0")
+        r.i.call("button-action", 1)
+        self.assertEqual(r.last_dash()[8], 100, "one press: only the lamp value")
 
     def test_icon_when_tc_on_in_p2(self):
         r = self.p2()
@@ -612,13 +626,15 @@ class IconTestTests(unittest.TestCase):
         self.assertEqual(r.g("dash-test-field"), -1)
         f = r.last_dash()
         self.assertEqual((f[6], f[8], f[10]), (1, 0, 0), "back to normal")
-        self.assertIn("BT ikon: tc-icon-field 2, tc-icon-bit 2", printed(r.v))
+        self.assertIn("TC jelzes: tc-icon-field 2, tc-icon-bit 2", printed(r.v))
 
     def test_tc_icon_suppressed_during_test(self):
         r = Rear()
         r.boot_p2()
         r.thr = IDLE
         r.step(int(0.5 / STEP))
+        r.i.set("tc-icon-field", 2)
+        r.i.set("tc-icon-bit", 2)
         seen = self.run_test(r)
         self.assertEqual([f[8] for f in seen[10:]], [0, 0, 0, 0], "no TC bit while testing")
         self.assertEqual(r.last_dash()[8], 2, "TC icon back after the test")

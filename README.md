@@ -60,15 +60,15 @@ első vezérlő áram-szorzóján keresztül hat, így a VESC Tool ADC beállít
 (görbe, rámpa) változatlanul érvényesek.
 Induláskor mindig bekapcsolva indul. A hangoláshoz a `(tc-teszt)` konzolparancs
 10 s-ig kiírja a két kerék sebességét és a szorzókat.
-Amíg be van kapcsolva (2-es profilban), a kijelzőn a **Bluetooth ikon** világít,
-ld. [A Bluetooth ikon](#a-bluetooth-ikon-kipörgésgátló-jelzés).
+A ki- és bekapcsolást 3 sípolás jelzi. Ikon alapból nem jelzi (a Bluetooth ikon
+nem vezérelhető), ld. [A kipörgésgátló jelzése](#a-kipörgésgátló-jelzése-a-kijelzőn).
 
 **Féklámpa (PPM kimenet):** folyamatosan világít. Fékezéskor azonnal kialszik,
 majd 5 Hz-cel villog, amíg a fékkar be van húzva.
 
 **Kijelzőn:** sebesség (km/h), akku töltöttség, mód (ECO/D/S), hőfok ikon
-(vezérlő ≥ 80 °C vagy motor ≥ 100 °C, mindkét vezérlőt figyeli), lámpa ikon,
-Bluetooth ikon = kipörgésgátló bekapcsolva (2-es profil), és hibakód. A kijelző saját lámpáját a lámpa mező 6-os bitje kapcsolja: a script a
+(vezérlő ≥ 80 °C vagy motor ≥ 100 °C, mindkét vezérlőt figyeli), lámpa ikon és
+hibakód. A kijelző saját lámpáját a lámpa mező 6-os bitje kapcsolja: a script a
 gyári vezérlőhöz hasonlóan 100-at (0x64) küld (`dash-light-value`). A korábbi
 1-es érték csak az ikont gyújtotta ki.
 
@@ -232,6 +232,15 @@ Ha nincs első vezérlő, a hátsó script elején legyen `(def front-enabled ni
 képet a sor- és oszlopszámmal. (Példa: a 7.00-s firmware olvasója legfeljebb 256
 karakteres szöveget enged egy idézőjelpár között, a hosszabbnál `read_error`.)
 
+**`Attempted to write to const heap at ..., but it is already occupied`**, utána
+`read_error`, `Current: ~CHANNEL~`: a VESC a scriptet egy flash-képből indítja
+(`image-save`), és a kép írási mutatója elavult. **Töltsd fel újra a scriptet
+arra a vezérlőre** (Upload): a feltöltés törli és újraépíti a képet. Az okát a
+script már kerüli (a futás közben betöltött könyvtári makrókat, pl. `looprange`,
+még a kép mentése előtt betölti). Előfordulhat még, ha a konzolba elgépelt,
+ismeretlen nevet írsz, és utána rögtön kikapcsolod a VESC-et: ilyenkor is a
+feltöltés a megoldás.
+
 ## Hibakeresés
 
 A Lisp konzolban (REPL) a `(status)` parancs kiírja a profilt, az állapotot, a
@@ -325,24 +334,22 @@ SWD csatlakozójának SWCLK lábán** van (`headlight-pin`).
 | 60 | az első vezérlő válaszol, de **régi scripttel**: töltsd fel az új `elso_vezerlo.lisp`-et (enélkül nincs külső lámpa és kipörgésgátló) |
 | egyéb | VESC hibakód (`get-fault`), pl. 1 = túlfeszültség, 2 = alacsony feszültség, 3 = DRV, 4 = abs. túláram, 5 = FET túlmelegedés, 6 = motor túlmelegedés |
 
-### A Bluetooth ikon (kipörgésgátló jelzés)
+### A kipörgésgátló jelzése a kijelzőn
 
-A 2-es profilban, amíg a kipörgésgátló be van kapcsolva, a script egy bitet
-küld a kijelzőnek (`tc-icon-field` = mező, `tc-icon-bit` = bit; alapból a lámpa
-mező 2-es bitje). A gyári rendszerben a Bluetooth ikont a kijelző saját BLE
-modulja kapcsolja (telefon csatlakozásakor), a vezérlő → kijelző üzenetben a
-bitje **sehol nincs dokumentálva**. Ha nem a Bluetooth ikon gyullad ki:
+A **Bluetooth ikon nem vezérelhető**: a gyári rendszerben a kijelző saját BLE
+modulja kapcsolja (telefon csatlakozásakor), és az `(ikon-teszt)` egyik lépése sem
+gyújtotta ki (2026-11-25). A lámpa mező bármely bitje a **lámpa ikont** gyújtja ki,
+ezért arra sem jó. Alapból tehát nincs ikon (`tc-icon-field -1`), a
+kipörgésgátló kapcsolását a 3 sípolás jelzi.
+
+Ha mégis egy ikon jelezze a bekapcsolt kipörgésgátlót (2-es profilban):
 
 1. Hátsó vezérlő Lisp konzol: `(ikon-teszt)`. 14 lépés, 3 s-onként, a lépés
    száma a sebesség helyén látszik, a konzol kiírja, mit küld.
-2. Amelyik lépésnél a Bluetooth ikon kigyullad, a konzol sorában lévő
-   `tc-icon-field` és `tc-icon-bit` értéket írd a script elejére.
-3. Ha egyik lépésnél sem: ez a kijelző a Bluetooth ikont nem engedi a vezérlőnek.
-   Ilyenkor egy másik ikon jelezhet (a teszt kiírja, mi gyulladt ki), vagy
-   `(def tc-icon-field -1)` = nincs jelzés.
-
-Ha a választott bit a lámpa mezőben van, ellenőrizd, hogy bekapcsolt
-kipörgésgátló mellett a lámpa is rendesen kapcsol-e.
+2. Válaszd ki azt a lépést, amelyiknél a kívánt ikon gyullad ki, és a konzol
+   sorában lévő `tc-icon-field` és `tc-icon-bit` értéket írd a script elejére. A
+   mód mező lépései (11–14) a gyári kiosztás szerint: +8 töltés-animáció, +32
+   lakat, +64 mph felirat, +128 hőmérő (a hőmérő a túlmelegedést is jelzi).
 
 ## Első próba (felemelt kerékkel)
 
@@ -362,8 +369,7 @@ kipörgésgátló mellett a lámpa is rendesen kapcsol-e.
    meg kézzel a **hátsó** kereket. A `(tc-teszt)` kiírásában az első kerék
    szorzója 1 alá esik, az első motor visszavesz. (Ha az elsőt fogod meg, nem
    történik semmi: a hátsóba a kipörgésgátló nem avatkozik bele.) Gomb 3x: 3
-   sípolás, a kipörgésgátló kikapcsol (a Bluetooth ikon kialszik), ugyanettől a
-   próbától már nem vesz vissza.
+   sípolás, a kipörgésgátló kikapcsol, ugyanettől a próbától már nem vesz vissza.
 
 ## Balansz mód (kísérleti)
 
@@ -492,8 +498,8 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   (nyitott drain, 1 kΩ felhúzóval az 5V-ra: 5 V-os gate-jel).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
   is ég, 1 = csak az ikon).
-- `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése (Bluetooth ikon) a
-  kijelzőn; -1 = nincs. Megkeresése: `(ikon-teszt)`.
+- `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése a kijelzőn (alapból
+  -1 = nincs; a Bluetooth ikon nem vezérelhető). Választás: `(ikon-teszt)`.
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
   állapota, mennyivel foroghat az első kerék gyorsabban a hátsónál (km/h), az a
   további különbség, amelynél az első hajtása nullára csökken (km/h), és a

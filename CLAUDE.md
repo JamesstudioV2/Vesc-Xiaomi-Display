@@ -31,11 +31,13 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   A 0x64 a gyári vezérlő értéke (camcamfresh, Arduino-fórum: „0x64 = on”); a Koxx3 SmartESC m365 0/1-et küld.
   A kijelző lámpája a kijelző tápjáról (VESC 5V) ég (gyári M365-ön ~4,1 V jön fel). A felhasználónál 100-zal
   sem ég (2026-11-23): `(ikon-teszt)` 7. (64) / 9. (100) lépés, ha egyiknél sem: táp / lámpa bekötés.
-- Kipörgésgátló jelzése: bekapcsolt TC-nél (2-es profil) a **Bluetooth ikon** (a felhasználó kérése, 2026-11-23).
-  A BT ikon bitje sehol nincs dokumentálva (a gyári kijelzőn a saját BLE modulja kapcsolja), ezért konfigurálható:
-  `tc-icon-field` (alap 2 = lámpa mező) + `tc-icon-bit` (alap 2) = **becslés**. `(ikon-teszt)`: 14 lépés, 3 s,
+- Kipörgésgátló jelzése: a felhasználó a **Bluetooth ikont** kérte (2026-11-23), de az **nem vezérelhető**: az
+  `(ikon-teszt)` egyik lépése sem gyújtotta ki (a felhasználó, 2026-11-25; a gyári kijelzőn a saját BLE modulja
+  kapcsolja). A lámpa mező bármely nem nulla értéke a **lámpa ikont** gyújtja ki (a 2-es bit alapérték elvette a
+  lámpa ikont: „egyszeri nyomásra nem működik a lámpa ikon”). Ezért `tc-icon-field -1` (nincs jelzés) az alap,
+  konfigurálható (`tc-icon-field`/`tc-icon-bit`); a felhasználó választhat ikont. `(ikon-teszt)`: 14 lépés, 3 s,
   a lépés száma a sebesség helyén: lámpa mező 1,2,4,…,128,100,255 (csere), mód mező +8,+32,+64,+128 (hozzáadva);
-  teszt közben a TC jelzés szünetel.
+  teszt közben a TC (és az AB lakat) jelzés szünetel.
 - CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
   bit1 BNO friss, bit2 lámpa láb visszaolvasva), script-verzió (2), első sebesség (i16, 0,1 km/h). A hátsó
   `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)` mindkét
@@ -74,6 +76,16 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   Hosszú konzolüzenet = több rövid `print`. Az ellenőrző és a szimulátor olvasója ezt is hibának jelzi.
   A teljes forrás (a VESC Tool kommentekkel együtt tölti fel) legfeljebb 128 KB (`flash_helper.c`,
   `LISP_MAX_SIZE`); 2026-11-25-én az AB hátsó script 76 KB, a main hátsó ~40 KB.
+- **Könyvtári kód előtöltése (flash-kép):** a 7.00 a `looprange`, `loopwhile`, `loopforeach`, `str-merge`, `abs`
+  (és a többi `lbm_dyn_lib.c` nevet) az első használatkor szövegből tölti be, és az új paraméterneveket
+  (`it`, `start`, `cnd`, ...) a flash-képbe írja (`store_symbol_name_flash`). A képbe mentett írási mutatót csak az
+  `image-save`, a REPL-parancs indulása és a main vége menti; a futás közbeni írás után egy újraindítás elavult
+  mutatót hagy, és a következő új név írása **„Attempted to write to const heap at N, but it is already
+  occupied”** + `read_error` (`Current: ~CHANNEL~`, a sor/oszlop a könyvtári szövegben) hibával leállítja a szálat
+  (a felhasználó első vezérlője, `(lampa-teszt)`, `looprange` → `it`, Line 1 Column 29, 2026-11-25). Ezért mindkét
+  script az `(image-save)` előtt egyszer meghívja őket. Az ellenőrző és a szimulátor (`DYN_LIB`, `image_saved`)
+  hibát ad, ha egy ilyen név először az image-save után futna. Helyreállítás a VESC-en: a script újrafeltöltése
+  (a `COMM_LISP_ERASE_CODE` a képet is törli). Elgépelt REPL-név + azonnali kikapcsolás ugyanezt okozhatja.
 - **SWD lábak induláskor (firmware):** `hwconf/board.h` minden láb ODR-jét 1-re állítja, a PA13/PA14 lebeg (nincs
   pull); a `main.c` `should_reset_config()` a PA14-et (SWCLK) rövid ideig kimenetként hajtja, és ha a HALL2 követi,
   **törli a beállításokat** (HALL2–SWCLK jumper). Ezért a script előbb `gpio-write`, utána `gpio-configure`
@@ -198,6 +210,15 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   `gpio-configure` (hátsó lámpa lábak, féklámpa, első `light-pin`); a szimulátor a board.h ODR=1-et és a hajtott
   szintek naplóját (`pin_log`) modellezi, teszt: induláskor a lámpa lába nem megy magasra. 126 teszt a main-en,
   164 a Balance ágon.
+
+- 2026-11-25 (2): A felhasználó: az első vezérlő `(lampa-teszt)`-je „Attempted to write to const heap at 4580, but it
+  is already occupied”, read_error, CTX 1552, `~CHANNEL~`, Line 1 Column 29 hibával áll le (az első sor kiírása után).
+  Ok: a `looprange` futás közbeni betöltése (ld. „Könyvtári kód előtöltése”). Javítva mindkét scriptben, minden
+  ágon; ellenőrző + szimulátor szabály, tesztek. „Egyszeri nyomásra nem működik a lámpa ikon, mert a
+  kipörgésgátlóra vált” = a TC jelzés (lámpa mező 2-es bit) elvette a lámpa ikont; „az ikontesztel nem indult be a
+  bluetooth ikon” → a TC jelzés alapból ki. Nyitott: „gázadásra a lámpa villog” (melyik lámpa? féklámpa = hamis
+  fékjel? külső lámpa = gombzaj vagy táp?), a kijelző lámpája az ikon-tesztben, melyik ikon jelezze a TC-t.
+  Tesztek: 129 a main-en, 167 a Balance ágon.
 
 ## Következő lépések
 1. Lámpa (az új, betölthető scriptekkel): a hátsó `(lampa-teszt)` `EREDMENY:` sora, a gate–GND mért feszültség, és a csere-próba (a lámpa MOSFET

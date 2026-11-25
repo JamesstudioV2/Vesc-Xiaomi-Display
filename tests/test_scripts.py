@@ -708,6 +708,37 @@ class LoaderRuleTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("read_error", r.stdout)
 
+    def test_console_strings_are_ascii(self):
+        """A konzolra csak ASCII megy (az ékezetes szöveg a VESC Tool-ban olvashatatlan)."""
+        from lbm_sim import TOKEN
+        for path in (REAR, FRONT):
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            pos = 0
+            while pos < len(text):
+                m = TOKEN.match(text, pos)
+                if m.lastgroup == "string":
+                    self.assertTrue(m.group("string").isascii(), m.group("string")[:60])
+                pos = m.end()
+
+    def test_library_code_preloaded_before_image_save(self):
+        """lbm_dyn_lib (7.00): a futás közben először betöltött looprange & co. a flash-képbe
+        ír; újraindítás után 'Attempted to write to const heap ... already occupied'
+        (a felhasználó első vezérlőjén a (lampa-teszt) így állt le, 2026-11-25)."""
+        from lbm_sim import Interp as I
+        for path in (REAR, FRONT):
+            i = I()
+            i.load(path)
+            self.assertTrue(i.image_saved, path)
+            for name in ("looprange", "loopwhile", "loopforeach", "str-merge", "abs"):
+                self.assertIn(name, i.dyn_loaded, "%s: %s" % (path, name))
+        late = I()
+        late.run("(defun f () (looprange i 0 2 nil))")
+        late.image_saved = True
+        with self.assertRaises(Exception) as cm:
+            late.run("(f)")
+        self.assertIn("image-save", str(cm.exception))
+
     def test_all_strings_fit_the_reader(self):
         from lbm_sim import TOKEN, token_len, MAX_TOKEN_LEN
         for path in (REAR, FRONT):
