@@ -66,6 +66,8 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   (`lispBM/include/tokpar.h`: `TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH 256`), a hosszabbnál a betöltés
   **`read_error`**-ral leáll (2026-11-25, a felhasználó képernyőképe: AB hátsó, 1460. sor 29. oszlop, 387 bájt).
   Hosszú konzolüzenet = több rövid `print`. Az ellenőrző és a szimulátor olvasója ezt is hibának jelzi.
+  A teljes forrás (a VESC Tool kommentekkel együtt tölti fel) legfeljebb 128 KB (`flash_helper.c`,
+  `LISP_MAX_SIZE`); 2026-11-25-én az AB hátsó script 76 KB, a main hátsó ~40 KB.
 - **SWD lábak induláskor (firmware):** `hwconf/board.h` minden láb ODR-jét 1-re állítja, a PA13/PA14 lebeg (nincs
   pull); a `main.c` `should_reset_config()` a PA14-et (SWCLK) rövid ideig kimenetként hajtja, és ha a HALL2 követi,
   **törli a beállításokat** (HALL2–SWCLK jumper). Ezért a script előbb `gpio-write`, utána `gpio-configure`
