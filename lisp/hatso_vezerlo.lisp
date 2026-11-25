@@ -24,7 +24,11 @@
 ;    Kipörgésgátló: ha az első kerék a megengedettnél gyorsabban forog, mint a
 ;    hátsó, az első hajtását csökkenti; a hátsóba nem avatkozik bele
 ;    (induláskor bekapcsolva).
-;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (ikon-teszt), (tc-teszt)
+;  - Egyedi kijelző-firmware-rel (M365_Display_Costum_BLE): a kipörgésgátló jelzése
+;    egy választható LED-en, fehér/piros számjegyek, Bluetooth név, és VESC Tool
+;    a kijelző Bluetooth-án keresztül (cmds-proc alagút). Gyári kijelzővel is megy.
+;  - Lisp konzol: (status), (gomb-teszt), (lampa-teszt), (ikon-teszt), (tc-teszt),
+;    egyedi kijelzővel: (led-teszt), (szin-teszt)
 ;
 ; Bekötés (COMM port):
 ;   kijelző piros  -> 5V        kijelző fekete -> GND
@@ -87,6 +91,19 @@
 ; (ikon-teszt) lépései közül válassz, pl. mód mező (0) + 128 = hőmérő ikon.
 (def tc-icon-field -1)        ; 0 = mód, 2 = lámpa mező; -1 = nincs jelzés
 (def tc-icon-bit 0)           ; ezt a bitet kapcsolja be a mezőben
+
+; Egyedi kijelző-firmware (github.com/JamesstudioV2/M365_Display_Costum_BLE). A
+; script felismeri (HELLO -> HELLO_ACK keret), és ha ott van, bővítő parancsokkal
+; használja: minden LED külön kapcsolható, fehér/piros számjegyek, Bluetooth név,
+; VESC Tool a kijelző Bluetooth-án át. Gyári kijelzővel ezek nem mennek, de nem is
+; zavarnak (a HELLO keretet a gyári kijelző figyelmen kívül hagyja).
+(def dash-ext t)              ; t = az egyedi kijelző-firmware keresése és használata
+(def ble-vesc-tool t)         ; t = VESC Tool a kijelző Bluetooth-án keresztül (cmds-proc)
+(def ble-name nil)            ; Bluetooth név, pl. "Roller-VESC" (nil = a kijelző alapneve)
+(def speed-color 0)           ; a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő
+(def tc-seg-byte 5)           ; egyedi kijelzőn a kipörgésgátló jelzése egy LED: bájt (0-5)
+(def tc-seg-bit 64)           ;   és bit érték (5. bájt 64 = Bluetooth ikon); -1 = nincs.
+                              ;   Bekapcsolt TC-nél ég, beavatkozáskor villog. (led-teszt)
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -180,6 +197,24 @@
 (def dash-test-value 0)
 (def dash-test-or t)           ; t = a bitet hozzáadja a mezőhöz, nil = a mezőt lecseréli
 (def dash-test-step -1)        ; a teszt lépés száma, a sebesség helyén látszik (-1 = nincs)
+(def dash-custom nil)          ; t = egyedi kijelző-firmware válaszolt (HELLO_ACK)
+(def dash-fw 0)                ; a kijelző firmware verziója (fő * 10 + al)
+(def dash-ext-time 0)          ; az utolsó bővítő keret a kijelzőtől
+(def dash-hello-time 0)
+(def dash-keep-time 0)         ; életjel (STYLE) a kijelzőnek másodpercenként
+(def dash-name-pending nil)
+(def dash-ble 0)               ; a kijelző Bluetooth-a: 0 = hirdet, 1 = kapcsolódva, 2 = nincs
+(def dash-ble-mode 0)          ; 1 = Xiaomi app, 2 = VESC Tool
+(def dash-credit 0)            ; ennyi bájtot küldhetünk még a VESC Tool felé
+(def dash-cmd nil)             ; egy elküldésre váró kész bővítő keret (dash-text)
+(def dash-seg-test -1)         ; (led-teszt): az égő LED sorszáma, -1 = nincs teszt
+(def seg-sent 0)               ; a kijelzőn élő LED felülírás kulcsa
+(def seg-time 0)
+(def tun-size 1536)            ; a VESC Tool felé váró bájtok gyűrűje
+(def tun-buf nil)
+(def tun-head 0)               ; az eseménykezelő írja
+(def tun-tail 0)               ; a soros szál olvassa
+(def cmds-started nil)
 
 @const-start
 
@@ -270,10 +305,11 @@
                 (setq front-version 1))
 }))
 
-(defun can-event-loop ()
+(defun can-event-loop () ; CAN visszajelzés és a VESC Tool alagút válaszai
     (loopwhile t
         (recv
             ((event-can-sid . ((? id) . (? data))) (on-front-ack id data))
+            ((event-cmds-data-tx (? data)) (tun-push data))
             (_ nil)
 )))
 
@@ -448,27 +484,203 @@
         (setq last-dash-tx (systime))
 })
 
+; -> Egyedi kijelző-firmware: bővítő keretek (cmd 0x7A, alparancs az arg bájtban)
+; Leírás: a kijelző repójában docs/protokoll.md. A kijelző minden bővítő kerete
+; gáz/fék keret is ([04 gáz fék 00 00] a payload elején). Kijelzőnként (keretenként)
+; legfeljebb egy bővítő keretet küldünk válaszként, a 0x64-re az állapotkeret után.
+
+(defun tun-used () { ; a gyűrűben váró bájtok (az író és az olvasó külön mutatót állít)
+        (var n (- tun-head tun-tail))
+        (if (< n 0) (+ n tun-size) n)
+})
+
+; A VESC parancsfeldolgozó válasza (event-cmds-data-tx) a gyűrűbe. Ha nem fér el,
+; eldobjuk (a VESC Tool újrakéri).
+(defun tun-push (data) {
+        (var n (buflen data))
+        (if (and tun-buf (< (+ (tun-used) n) tun-size)) {
+                (var n1 (min2 n (- tun-size tun-head)))
+                (bufcpy tun-buf tun-head data 0 n1)
+                (if (> n n1) (bufcpy tun-buf 0 data n1 (- n n1)))
+                (setq tun-head (mod (+ tun-head n) tun-size))
+        })
+})
+
+; Fejléc és CRC a kész payload köré (a payload a 6. bájttól már a helyén van).
+(defun dx-fill (f sub) {
+        (var n (- (buflen f) 8))
+        (bufset-u16 f 0 0x55AA)
+        (bufset-u8 f 2 (+ n 2))
+        (bufset-u8 f 3 0x21) ; ESC -> kijelző
+        (bufset-u8 f 4 0x7A)
+        (bufset-u8 f 5 sub)
+        (var sum 0)
+        (looprange i 2 (+ n 6) (setq sum (+ sum (bufget-u8 f i))))
+        (var crc (bitwise-xor (bitwise-and sum 0xFFFF) 0xFFFF))
+        (bufset-u8 f (+ n 6) (bitwise-and crc 0xFF))
+        (bufset-u8 f (+ n 7) (bitwise-and (shr crc 8) 0xFF))
+        f
+})
+
+(defun dx-send (f sub) {
+        (uart-write (dx-fill f sub))
+        (free f)
+})
+
+; LED felülírás: be[6] ki[6] villog[6], ttl x100 ms (0 = törlés)
+(defun dx-segments (ttl seg-byte bits off-all blink) {
+        (var f (bufcreate 27))
+        (bufset-u8 f 6 ttl)
+        (if (>= seg-byte 0) (bufset-u8 f (+ (if blink 19 7) seg-byte) bits))
+        (if off-all (looprange i 13 19 (bufset-u8 f i 0xFF)))
+        (dx-send f 0x10)
+})
+
+(defun tc-seg-on () (and tc-on (= profile 2) (>= tc-seg-byte 0) (> tc-seg-bit 0)))
+
+(defun seg-key () ; a kívánt LED felülírás azonosítója, 0 = nincs
+    (cond
+        ((>= dash-seg-test 0) (+ 1000 dash-seg-test))
+        ((tc-seg-on) (+ 2000 (if (< tc-front 0.99) 1 0)))
+        (t 0)))
+
+(defun seg-due () {
+        (var k (seg-key))
+        (or (not (= k seg-sent)) (and (> k 0) (> (secs-since seg-time) 0.5)))
+})
+
+(defun send-seg () {
+        (var k (seg-key))
+        (setq seg-sent k)
+        (setq seg-time (systime))
+        (cond
+            ((>= dash-seg-test 0)
+                (dx-segments 30 (/ dash-seg-test 8) (shl 1 (mod dash-seg-test 8)) t nil))
+            ((> k 0) (dx-segments 15 tc-seg-byte tc-seg-bit nil (= k 2001)))
+            (t (dx-segments 0 -1 0 nil nil)))
+})
+
+(defun tunnel-down () { ; a VESC Tool felé váró bájtokból legfeljebb 100, ha a kijelzőnek van helye
+        (var k (min2 (min2 (tun-used) 100) dash-credit))
+        (if (> k 0) {
+                (var f (bufcreate (+ k 8)))
+                (var n1 (min2 k (- tun-size tun-tail)))
+                (bufcpy f 6 tun-buf tun-tail n1)
+                (if (> k n1) (bufcpy f (+ 6 n1) tun-buf 0 (- k n1)))
+                (setq tun-tail (mod (+ tun-tail k) tun-size))
+                (setq dash-credit (- dash-credit k))
+                (dx-send f 0x20)
+        })
+})
+
+; Egy kijelzőkeret után legfeljebb egy bővítő keret: HELLO (amíg nem ismert az
+; egyedi firmware), név, LED felülírás, életjel/stílus, egyszeri parancs, alagút.
+(defun dx-reply (cmd) {
+        (cond
+            ((not dash-ext) nil)
+            ((not dash-custom)
+                (if (and (= cmd 0x64)
+                        (or (= dash-hello-time 0) (> (secs-since dash-hello-time) 1.0))) {
+                        (setq dash-hello-time (systime))
+                        (var f (bufcreate 10))
+                        (bufset-u8 f 6 1) ; protokoll verzió
+                        (dx-send f 0x01)
+                }))
+            ((and dash-name-pending ble-name) {
+                    (setq dash-name-pending nil)
+                    (var n (min2 (- (buflen ble-name) 1) 20)) ; a lezáró 0 nélkül
+                    (var f (bufcreate (+ n 8)))
+                    (bufcpy f 6 ble-name 0 n)
+                    (dx-send f 0x17)
+            })
+            ((seg-due) (send-seg))
+            ((> (secs-since dash-keep-time) 1.0) {
+                    (setq dash-keep-time (systime))
+                    (var f (bufcreate 11))
+                    (bufset-u8 f 6 speed-color)
+                    (bufset-u8 f 7 1) ; hibakód: piros
+                    (bufset-u8 f 8 0) ; töltés: fehér
+                    (dx-send f 0x13)
+            })
+            (dash-cmd {
+                    (var f dash-cmd)
+                    (setq dash-cmd nil)
+                    (uart-write f)
+                    (free f)
+            })
+            (t (tunnel-down))
+        )
+})
+
+; Bővítő keret a kijelzőtől. rx-buf: [0] cím, [1] 0x7A, [2] alparancs,
+; [3..7] gáz/fék blokk, [8..] adat.
+(defun dash-ext-frame (len) {
+        (var sub (bufget-u8 rx-buf 2))
+        (setq dash-ext-time (systime))
+        (cond
+            ((and (= sub 0x81) (>= len 12)) { ; HELLO_ACK
+                    (if (not dash-custom) (print "Egyedi kijelzo-firmware felismerve"))
+                    (setq dash-custom t)
+                    (setq dash-fw (+ (* 10 (bufget-u8 rx-buf 9)) (bufget-u8 rx-buf 10)))
+                    (setq dash-name-pending (not (eq ble-name nil))) ; nil = a kijelző alapneve
+                    (setq dash-keep-time 0)
+                    (setq seg-sent -1)
+            })
+            ((and (= sub 0x82) (>= len 11)) { ; STATUS
+                    (setq dash-custom t)
+                    (setq dash-ble (bufget-u8 rx-buf 8))
+                    (setq dash-ble-mode (bufget-u8 rx-buf 9))
+                    (setq dash-credit (bufget-u16 rx-buf 10 'little-endian))
+            })
+            ((and (= sub 0xA0) (>= len 9)) { ; TUNNEL_UP: VESC Tool -> VESC
+                    (setq dash-custom t)
+                    (setq dash-credit (bufget-u16 rx-buf 8 'little-endian))
+                    (var n (- len 9))
+                    (if (and (> n 0) cmds-started) {
+                            (var d (bufcreate n))
+                            (bufcpy d 0 rx-buf 10 n)
+                            (trap (cmds-proc d))
+                            (free d)
+                    })
+            })
+        )
+})
+
+; REPL-ből hívható: (dash-text "P2" 1 20) - két karakter a sebesség helyén
+; (egyedi kijelzőn). color: 0 = fehér, 1 = piros, 2 = mindkettő; ttl x100 ms, 0 = törlés.
+(defun dash-text (txt color ttl) {
+        (var f (bufcreate 13))
+        (bufset-u8 f 6 ttl)
+        (bufset-u8 f 8 color)
+        (bufset-u8 f 9 (bufget-u8 txt 0))
+        (bufset-u8 f 10 (bufget-u8 txt 1))
+        (setq dash-cmd (dx-fill f 0x12))
+})
+
 (defun process-frame (len) {
         (var addr (bufget-u8 rx-buf 0))
         (var cmd (bufget-u8 rx-buf 1))
         (if (not (= addr 0x21)) { ; 0x21 = ESC -> kijelző, a saját keretünk
-                ; gáz/fék a 0x64 és 0x65 keretben a 4-5. bájton, app olvasásnál (0x61) eggyel arrébb
+                ; gáz/fék a 0x64, 0x65 (és az egyedi kijelző 0x7A) keretében a 4-5. bájton,
+                ; app olvasásnál (0x61) eggyel arrébb
                 (cond
-                    ((and (or (= cmd 0x64) (= cmd 0x65)) (>= len 5)) (lever-input 4))
+                    ((and (or (= cmd 0x64) (= cmd 0x65) (= cmd 0x7A)) (>= len 5)) (lever-input 4))
                     ((and (= cmd 0x61) (>= len 6)) (lever-input 5))
                 )
                 (if (= cmd 0x64) (setq last-0x64-time (systime)))
+                (if (= cmd 0x7A) (dash-ext-frame len))
                 ; A gyári vezérlő a 0x64-re válaszol. Ha nem jön 0x64, a 0x65-re válaszolunk.
                 (if (and (> (secs-since last-dash-tx) 0.04)
                         (or (= cmd 0x64)
                             (and (= cmd 0x65) (> (secs-since last-0x64-time) 0.5))))
                     (send-dash))
+                (if (or (= cmd 0x64) (= cmd 0x65) (= cmd 0x7A)) (dx-reply cmd))
         })
 })
 
 (defun read-frame () {
         (var len (read-u8))
-        (if (and (>= len 2) (<= len 58)) {
+        (if (>= len 2) { ; len <= 255: az rx-buf 260 bájtos
                 (uart-read-bytes rx-buf (+ len 3) 0) ; addr..payload + 2 crc bájt
                 (var sum len)
                 (looprange i 0 (+ len 1) (setq sum (+ sum (bufget-u8 rx-buf i))))
@@ -684,6 +896,11 @@
                 (refresh-gate)
                 (update-temp-warn)
                 (update-front-warn)
+                ; az egyedi kijelző 1 s-onként jelentkezik; 5 s csend után gyárinak vesszük
+                (if (and dash-custom (> (secs-since dash-ext-time) 5.0)) {
+                        (setq dash-custom nil)
+                        (setq dash-credit 0)
+                })
         })
 })
 
@@ -712,6 +929,8 @@
                 'elso-verzio front-version 'elso-regi front-old 'elso-vesc-hiba front-fault)
             (list 'tc tc-on 'tc-aktiv (tc-active) 'tc-elso tc-front
                 'elso-km/h front-speed 'tc-ikon (tc-icon-on))
+            (list 'kijelzo (if dash-custom 'egyedi 'gyari) 'fw dash-fw 'ble dash-ble
+                'ble-mod dash-ble-mode 'kredit dash-credit 'alagut (tun-used) 'cmds cmds-started)
 )))
 
 (defun pin-label (p) ; a láb neve a konzolra, a csatlakozó felirata szerint
@@ -817,6 +1036,44 @@
         (print "Ikon teszt vege. A kiporgesgatlo jelzesere valasztott ikon lepesenek ertekeit ird a tc-icon-field / tc-icon-bit sorba, a lampaet a dash-light-value sorba.")
 })
 
+; REPL-ből hívható: (led-teszt) - egyedi kijelző-firmware kell. Egyesével kigyújtja a
+; 48 LED-bitet (6 bájt x 8 bit) 1,5 s-onként, a többi LED ilyenkor nem ég. A konzol
+; írja a bájtot és a bit értékét: így kideríthető, melyik bit melyik ikon
+; (tc-seg-byte, tc-seg-bit).
+(defun led-teszt () {
+        (if (not dash-custom)
+            (print "Ehhez az egyedi kijelzo-firmware kell (M365_Display_Costum_BLE).")
+            {
+                (print "LED teszt: 1,5 s-onkent egy LED, a konzol irja a bajtot es a bit erteket.")
+                (looprange i 0 48 {
+                        (print (str-merge (str-from-n (+ i 1) "%d") ". LED: bajt "
+                                (str-from-n (/ i 8) "%d") ", bit ertek " (str-from-n (shl 1 (mod i 8)) "%d")))
+                        (setq dash-seg-test i)
+                        (sleep 1.5)
+                })
+                (setq dash-seg-test -1)
+                (print "LED teszt vege. A valasztott LED adatait ird a tc-seg-byte / tc-seg-bit sorba.")
+        })
+})
+
+; REPL-ből hívható: (szin-teszt) - "88" fehéren, pirosan, majd mindkét színnel
+; (egyedi kijelző-firmware kell). A sebesség színe: speed-color.
+(defun szin-teszt () {
+        (if (not dash-custom)
+            (print "Ehhez az egyedi kijelzo-firmware kell (M365_Display_Costum_BLE).")
+            {
+                (print "Szin teszt: 88 feheren, pirosan, majd mindket szinnel (3-3 s).")
+                (dash-text "88" 0 30)
+                (sleep 3.0)
+                (dash-text "88" 1 30)
+                (sleep 3.0)
+                (dash-text "88" 2 30)
+                (sleep 3.0)
+                (dash-text "88" 0 0)
+                (print "Szin teszt vege. A sebesseg szine: speed-color (0 feher, 1 piros, 2 mindketto).")
+        })
+})
+
 (defun init () {
         (setq boot-time (systime))
 
@@ -834,7 +1091,8 @@
 
         ; uart-read-bytes az olvasott bájtok után egy 0-t is ír, ezért +1 hely kell
         (def rx-one (bufcreate 2))
-        (def rx-buf (bufcreate 64))
+        (def rx-buf (bufcreate 260))         ; a leghosszabb keret: len 255 + 3 + lezáró 0
+        (if ble-vesc-tool (setq tun-buf (bufcreate tun-size)))
         (def can-tx (bufcreate 8))
         (def tx-frame (bufcreate 14))
         (bufset-u16 tx-frame 0 0x55AA)
@@ -867,6 +1125,13 @@
         (apply-mode) ; induláskor az 1-es profil korlátai élnek
         (event-register-handler (spawn can-event-loop))
         (event-enable 'event-can-sid)
+        ; VESC Tool a kijelző Bluetooth-án át: a VESC parancsfeldolgozója (kb. 3 KB)
+        (if ble-vesc-tool {
+                (setq cmds-started (eq (car (trap (cmds-start-stop t))) 'exit-ok))
+                (if cmds-started
+                    (event-enable 'event-cmds-data-tx)
+                    (print "VESC Tool alagut: a cmds-start-stop nem indult (memoria?)"))
+        })
 })
 
 ; Indulás: mindkét rész védve, a hibát a konzol kiírja, és a vezérlés akkor is
