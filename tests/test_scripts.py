@@ -303,18 +303,6 @@ class ButtonTests(unittest.TestCase):
         r.step(int(0.5 / STEP))
         self.assertEqual(r.v.out("pin-swclk"), 0)
 
-    def test_headlight_on_front_option(self):
-        r = Rear()
-        r.i.set("headlight-on-front", True)
-        r.boot_p1()
-        self.press(r, 0.1)
-        r.step(int(0.5 / STEP))
-        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 4, "headlight bit to the front ESC")
-        self.assertEqual(r.v.can_tx[-1][1][1] & 3, 0, "limit flags unchanged (P1)")
-        self.press(r, 0.1)
-        r.step(int(0.5 / STEP))
-        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0)
-
     def test_legacy_headlight_on_rear_adc2(self):
         r = Rear()
         r.i.set("headlight-pin", Symbol("pin-adc2"))
@@ -553,34 +541,27 @@ class FrontTests(unittest.TestCase):
         self.assertEqual(self.fv.conf["l-current-max-scale"], 0.0, "P1: front drive off")
         self.assertEqual(self.fv.conf["l-current-min-scale"], 0.0, "P1: front brake off")
 
-    def test_headlight_on_front_ppm(self):
-        self.assertEqual(self.fv.out("pin-ppm"), 0, "off at boot")
+    def test_no_lamp_on_the_front(self):
+        """A lámpa a hátsón van: az első vezérlő egy lábhoz sem nyúl, a régi
+        (2-es bites) lámpa parancsot figyelmen kívül hagyja."""
         self.f.call("on-cmd", bytearray([0xA5, 3 | 4, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
-        self.assertEqual(self.fv.out("pin-ppm"), 1)
-        self.assertEqual(self.fv.conf["l-current-max-scale"], 1.0, "light bit is not a limit flag")
+        self.assertEqual(self.fv.conf["l-current-max-scale"], 1.0, "bit 2 is not a limit flag")
         sid, ack = self.fv.can_tx[-1]
         self.assertEqual(ack[1], 3, "ack echoes only the limit flags")
-        n = len(self.fv.conf_log)
-        self.f.call("on-cmd", bytearray([0xA5, 3, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
-        self.assertEqual(self.fv.out("pin-ppm"), 0)
-        self.assertEqual(len(self.fv.conf_log), n, "toggling the light rewrites no config")
-
-    def test_headlight_survives_rear_silence_and_app_restart(self):
-        self.f.call("on-cmd", bytearray([0xA5, 3 | 4, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
-        self.fv.now += 2.0
-        self.fv.gpio_mode["pin-ppm"] = "pin-mode-in"  # pwm_servo_stop
+        self.assertEqual(ack[4] & 5, 0, "no lamp bits in the status")
         self.f.call("watchdog-step")
-        self.assertEqual(self.fv.out("pin-ppm"), 1)
-        self.assertEqual(self.fv.conf["l-current-max-scale"], 0.0, "motor still disabled")
+        for pin in ("pin-ppm", "pin-swdio", "pin-swclk", "pin-adc1", "pin-adc2"):
+            self.assertNotIn(pin, self.fv.gpio_mode, pin)
+        self.assertEqual(self.fv.pin_log, [])
 
-    def test_rear_light_toggle_reaches_front(self):
+    def test_rear_light_is_not_sent_to_front(self):
         r = Rear()
-        r.i.set("headlight-on-front", True)
         r.boot_p1()
         r.i.set("light", True)
         r.step(6)
+        self.assertEqual(r.v.can_tx[-1][1][1] & 4, 0, "no lamp bit on the CAN")
         self.f.call("on-cmd", bytearray(r.v.can_tx[-1][1]))
-        self.assertEqual(self.fv.out("pin-ppm"), 1)
+        self.assertNotIn("pin-ppm", self.fv.gpio_mode)
 
     def test_timeout_disables_front(self):
         self.f.call("on-cmd", bytearray([0xA5, 3, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
@@ -753,4 +734,4 @@ class LoaderRuleTests(unittest.TestCase):
                     longest = max(longest, token_len("string", m.group("string")))
                 pos = m.end()
             self.assertLessEqual(longest, MAX_TOKEN_LEN, path)
-            self.assertGreater(longest, 100, "the scan found the strings")
+            self.assertGreater(longest, 40, "the scan found the strings")

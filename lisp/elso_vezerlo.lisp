@@ -9,18 +9,15 @@
 ;   2-es profil: hajtás és fék be, ugyanazok a sebesség/watt/áram korlátok,
 ;                mint a hátsón (a kipörgésgátló az áram-szorzót csökkentheti)
 ; Ha 1 másodpercig nem jön üzenet (vagy induláskor), az első motor tiltva van.
-; Az első lámpa MOSFET-je ennek a vezérlőnek a PPM lábán van (light-pin), a
-; hátsó a CAN üzenet flags 2-es bitjével kapcsolja. Üzenetkiesésnél a lámpa
-; az utolsó állapotában marad (ne aludjon ki menet közben).
-; A visszajelzésben a hátsó megkapja ennek a scriptnek a verzióját, a lámpa
-; állapotát, az első kerék sebességét (kipörgésgátló) és a VESC hibakódot.
+; Lámpa ezen a vezérlőn nincs: a külső lámpa és a féklámpa is a hátsón van.
+; A visszajelzésben a hátsó megkapja ennek a scriptnek a verzióját, az első
+; kerék sebességét (kipörgésgátló) és a VESC hibakódot.
 ;
 ; Opcionális: BNO085 IMU ennek a vezérlőnek a COMM portján (bno-enabled). A
 ; szögek CAN-en mennek a hátsónak (a balansz ágak használják, a main ágon nem
 ; kell). A VESC Tool IMU listájában a BNO085 nincs benne, ezért olvassa a script.
 ;
-; Lisp konzol: (lampa-teszt) - a lámpa kimenet 5x ki-be, a hátsótól függetlenül
-;              (bno) - a BNO085 állapota és szögei
+; Lisp konzol: (bno) - a BNO085 állapota és szögei
 ; =============================================================================
 
 (def script-version 2)   ; a hátsó script ellenőrzi (front-min-version)
@@ -28,9 +25,6 @@
 (def ack-sid 0x4D1)      ; első -> hátsó (front-ack-sid)
 (def imu-sid 0x4D2)      ; első -> hátsó: BNO085 szögek (a hátsó imu-sid értéke)
 (def rx-timeout 1.0)     ; s
-(def light-pin 'pin-ppm) ; az első lámpa MOSFET gate-je (App to Use: No App, Servo Output: ki).
-                         ; Ha a PPM láb sérült: 'pin-swdio vagy 'pin-swclk (az SWD csatlakozó,
-                         ; közvetlen MCU láb; utána az SWD programozó újraindításig nem megy).
 
 ; BNO085 a COMM porton (a main ágon nem kell, a balansz ágakon t)
 ;  I2C (alap, PS0 = PS1 = 0):  SDA -> RX, SCL -> TX, VIN -> 3.3V, GND -> GND
@@ -50,8 +44,6 @@
 (def cur-scale -1)
 (def cur-kmh10 -1)
 (def cur-watt100 -1)
-(def front-light nil)
-(def lamp-test nil)          ; (lampa-teszt) alatt a parancs nem írja a lámpa lábát
 
 (def bno-state 'detect)      ; 'detect -> 'boot -> 'run
 (def bno-state-time 0)
@@ -77,11 +69,6 @@
         (t x)
 ))
 
-(defun conf-try (name dflt) { ; konfiguráció olvasása; ha a firmware nem ismeri: dflt
-        (var r (trap (conf-get name)))
-        (if (eq (car r) 'exit-ok) (ix r 1) dflt)
-})
-
 ; flags: bit0 = hajtás, bit1 = fék; scale: %; kmh10: km/h*10; watt100: watt/100
 ; Csak a megváltozott értéket írjuk (a kipörgésgátló gyakran állítja a szorzót).
 (defun apply-limits (flags scale kmh10 watt100) {
@@ -102,15 +89,14 @@
 (defun bno-fresh () (and bno-enabled (< (secs-since bno-time) 0.2)))
 
 ; visszajelzés, 8 bájt: A5, flags, áram %, VESC hibakód, állapot, verzió,
-; sebesség (0,1 km/h, előjeles). Állapot: bit0 = lámpa parancs, bit1 = BNO085
-; adat friss, bit2 = a lámpa láb visszaolvasott szintje.
+; sebesség (0,1 km/h, előjeles). Állapot: bit1 = BNO085 adat friss (a 0. és a
+; 2. bit a korábbi, első vezérlős lámpáé volt, ma mindig 0).
 (defun send-ack () {
         (bufset-u8 ack 0 0xA5)
         (bufset-u8 ack 1 cur-flags)
         (bufset-u8 ack 2 cur-scale)
         (bufset-u8 ack 3 (clamp (get-fault) 0 255))
-        (bufset-u8 ack 4 (+ (if front-light 1 0) (if (bno-fresh) 2 0)
-                (if (= (gpio-read light-pin) 1) 4 0)))
+        (bufset-u8 ack 4 (if (bno-fresh) 2 0))
         (bufset-u8 ack 5 script-version)
         (bufset-i16 ack 6 (clamp (to-i (round (* (get-speed) 36.0))) -32000 32000))
         (can-send-sid ack-sid ack)
@@ -119,8 +105,6 @@
 (defun on-cmd (data)
     (if (and (>= (buflen data) 8) (= (bufget-u8 data 0) 0xA5)) {
             (setq last-rx (systime))
-            (setq front-light (= (bitwise-and (bufget-u8 data 1) 4) 4))
-            (if (not lamp-test) (gpio-write light-pin (if front-light 1 0)))
             (apply-limits (bitwise-and (bufget-u8 data 1) 3) (bufget-u8 data 2)
                 (bufget-u16 data 3) (bufget-u16 data 5))
             (send-ack)
@@ -135,49 +119,8 @@
 )))
 
 (defun watchdog-step () {
-    ; ha egy App vagy Servo Output váltás visszaállítaná, újra kimenet
-    (gpio-configure light-pin 'pin-mode-out)
     (if (and (> (secs-since last-rx) rx-timeout) (not (= cur-flags 0)))
         (apply-limits 0 cur-scale cur-kmh10 cur-watt100))
-})
-
-; REPL-ből hívható: (lampa-teszt) - a lámpa kimenetet 5x 1 s-ra bekapcsolja,
-; a hátsó parancsától függetlenül, és visszaolvassa a láb szintjét ("lab",
-; BE alatt 1, KI alatt 0 kell legyen). A végén kiírja, mire lehet következtetni
-; (README: "A lámpa nem működik").
-(defun lampa-teszt () {
-        (var app (conf-try 'app-to-use -1))
-        (var hi 0) ; bekapcsolva hányszor volt magas a láb
-        (var lo 0) ; kikapcsolva hányszor volt alacsony
-        (setq lamp-test t)
-        (print (str-merge "Lampa teszt: 5x 1 s BE, 1 s KI (App to Use: " (str-from-n app "%d")
-                ", 0 = No App)"))
-        (if (or (= app 1) (= app 4))
-            (print "FIGYELEM: az elso vezerlon a PPM app fut, az is ezt a labat hasznalja: App to Use = No App!"))
-        (looprange i 0 5 {
-                (gpio-configure light-pin 'pin-mode-out)
-                (gpio-write light-pin 1)
-                (sleep 0.05)
-                (var r1 (gpio-read light-pin))
-                (if (= r1 1) (setq hi (+ hi 1)))
-                (print (str-merge "BE  (lab = " (str-from-n r1 "%d") ")"))
-                (sleep 0.95)
-                (gpio-write light-pin 0)
-                (sleep 0.05)
-                (var r0 (gpio-read light-pin))
-                (if (= r0 0) (setq lo (+ lo 1)))
-                (print (str-merge "KI  (lab = " (str-from-n r0 "%d") ")"))
-                (sleep 0.95)
-        })
-        (setq lamp-test nil)
-        (gpio-write light-pin (if front-light 1 0))
-        (print (cond
-                ((and (= hi 5) (= lo 5))
-                    "EREDMENY: a vezerlo laba rendben kapcsol. Ha a lampa nem villogott, merd a PPM jel es GND laba kozott (BE: kb. 3,3 V). Nincs fesz: a nyak serult. Van fesz: MOSFET, bekotes vagy a lampa tapja.")
-                ((= hi 0)
-                    "EREDMENY: a lab bekapcsolva sem megy magasra. Huzd le a lampa vezeteket, es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos; ha ugy sem, a vezerlo laba serult (hasznald a 'pin-swdio labat).")
-                (t "EREDMENY: a lab bizonytalanul kapcsol (laza erintkezes, tulterheles?).")))
-        (print "Lampa teszt vege")
 })
 
 ; -> BNO085 (CEVA SH-2, SHTP protokoll)
@@ -421,8 +364,6 @@
         (def bno-tx-feat (bufcreate 21))
         (def rvc-one (bufcreate 2))   ; uart-read-bytes: +1 bájt a záró 0-nak
         (def rvc-buf (bufcreate 18))
-        (gpio-write light-pin 0) ; előbb a szint, utána a kimenet mód (ne villanjon)
-        (gpio-configure light-pin 'pin-mode-out)
         (apply-limits 0 0 250 5) ; induláskor tiltva, amíg a hátsó nem szól
         (event-register-handler (spawn event-loop))
         (event-enable 'event-can-sid)
@@ -453,9 +394,9 @@
 ; (pl. "it", "start") a flash-képbe írja. Ha ez csak futás közben, az image-save
 ; után történik, a képbe mentett írási mutató elavul, és egy újraindítás után a
 ; következő ilyen betöltés "Attempted to write to const heap ... already occupied"
-; + read_error hibával leállítja az éppen futó szálat (első vezérlő, (lampa-teszt),
-; 2026-11-25). Ezért itt, az image-save előtt mindet betöltjük: így a képbe
-; kerülnek, és futás közben nincs flash-írás.
+; + read_error hibával leállítja az éppen futó szálat (így állt le 2026-11-25-én
+; egy konzolparancs ezen a vezérlőn). Ezért itt, az image-save előtt mindet
+; betöltjük: így a képbe kerülnek, és futás közben nincs flash-írás.
 (looprange i 0 1 nil)
 (loopwhile nil nil)
 (loopforeach x nil nil)
