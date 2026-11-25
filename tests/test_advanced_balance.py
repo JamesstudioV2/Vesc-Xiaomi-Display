@@ -406,19 +406,30 @@ class IconTests(unittest.TestCase):
         self.assertEqual(r.g("dash-test-step"), -1)
         self.assertGreaterEqual(len(r.v.printed), 14)
 
-    def test_lock_and_bluetooth_icons_together(self):
+    def test_lock_icon_only_by_default(self):
+        """A TC jelzés alapból ki (a Bluetooth ikon nem vezérelhető): a lámpa mező szabad."""
         r = ab_on()
         self.assertTrue(r.g("tc-on"))
         f = r.last_dash()
         self.assertEqual(f[6] & 32, 32, "AB: lock icon")
-        self.assertEqual(f[8] & 2, 2, "TC on: Bluetooth icon bit")
+        self.assertEqual(f[8], 0, "lamp off, no TC bit")
+
+    def test_lock_and_tc_icons_together(self):
+        r = ab_on()
+        r.i.set("tc-icon-field", 0)
+        r.i.set("tc-icon-bit", 128)
+        f = r.last_dash()
+        self.assertEqual(f[6] & 32, 32, "AB: lock icon")
+        self.assertEqual(f[6] & 128, 128, "TC on: chosen icon bit")
         r.i.call("tc-toggle")
         f = r.last_dash()
         self.assertEqual(f[6] & 32, 32)
-        self.assertEqual(f[8] & 2, 0, "TC off: no Bluetooth icon bit")
+        self.assertEqual(f[6] & 128, 0, "TC off: no TC icon bit")
 
     def test_icons_suppressed_during_ikon_teszt(self):
         r = ab_on()
+        r.i.set("tc-icon-field", 2)
+        r.i.set("tc-icon-bit", 2)
         seen = []
 
         def sleep(secs):

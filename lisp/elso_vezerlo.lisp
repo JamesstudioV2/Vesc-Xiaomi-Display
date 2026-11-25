@@ -448,5 +448,19 @@
 
 @const-end
 
+; A LispBM 7.00 a looprange, loopwhile, loopforeach makrót és a str-merge, abs
+; függvényt az első használatkor szövegből tölti be, és az ehhez kellő új neveket
+; (pl. "it", "start") a flash-képbe írja. Ha ez csak futás közben, az image-save
+; után történik, a képbe mentett írási mutató elavul, és egy újraindítás után a
+; következő ilyen betöltés "Attempted to write to const heap ... already occupied"
+; + read_error hibával leállítja az éppen futó szálat (első vezérlő, (lampa-teszt),
+; 2026-11-25). Ezért itt, az image-save előtt mindet betöltjük: így a képbe
+; kerülnek, és futás közben nincs flash-írás.
+(looprange i 0 1 nil)
+(loopwhile nil nil)
+(loopforeach x nil nil)
+(str-merge "")
+(abs 0)
+
 (image-save)
 (main)

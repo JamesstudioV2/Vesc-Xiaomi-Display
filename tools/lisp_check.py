@@ -9,6 +9,12 @@ It does not run the code. It checks:
   * no top-level def/define inside @const-start ... @const-end (it would be
     stored in flash as a constant),
   * balanced (), {} and [] (strings and ; comments are skipped),
+  * every lazily loaded library macro/function (lbm_dyn_lib.c: looprange,
+    loopwhile, loopforeach, str-merge, abs, ...) that the code uses is also
+    used at top level before (image-save): loaded only at run time, it writes
+    new symbol names into the flash image after the saved write pointer, and
+    after a reboot the next such write fails with "Attempted to write to const
+    heap ... already occupied" + read_error, killing the running thread,
   * no string literal or symbol longer than 256 bytes: the 7.00 reader
     (tokpar.c, TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH) stops loading the whole
     script with "read_error" at a longer one,
@@ -33,6 +39,23 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_TOKEN_LEN = 256   # lispBM/include/tokpar.h, TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH (7.00)
+DYN_LIB = {   # lispBM/src/extensions/lbm_dyn_lib.c (7.00)
+    "defun", "defunret", "defmacro", "loopfor", "loopwhile", "looprange", "loopforeach",
+    "loopwhile-thd", "defstruct", "str-merge", "iota", "foldl", "foldr", "zipwith", "zip",
+    "filter", "str-cmp-asc", "str-cmp-dsc", "second", "third", "abs", "create-struct",
+    "is-struct", "accessor-sym", "access-set", "list-to-array", "array-to-list", "array?",
+}
+
+
+def list_heads(node, out):
+    """Every atom in head position of a list form, anywhere in node."""
+    if node[0] in ("list", "array"):
+        items = node[1]
+        if node[0] == "list" and items and items[0][0] == "atom":
+            out.add(items[0][1])
+        for it in items:
+            list_heads(it, out)
+    # quoted forms are data, not calls: not descended into
 
 
 def string_len(tok):
@@ -278,6 +301,23 @@ def main(argv):
             elif in_const and node[0] == "list" and node[1] and atom_name(node[1][0]) in ("def", "define"):
                 errors.append("%s:%d: top-level '%s' inside @const-start: it becomes a flash constant"
                               % (path, node[2], atom_name(node[1][1]) if len(node[1]) > 1 else "?"))
+        # lazily loaded library code must be loaded before (image-save)
+        used = set()
+        for node in forms:
+            list_heads(node, used)
+        preloaded, saved = set(), False
+        for node in forms:
+            if node[0] == "list" and node[1] and node[1][0][0] == "atom":
+                head = node[1][0][1]
+                if head == "image-save":
+                    saved = True
+                    break
+                preloaded.add(head)
+        if saved:
+            for name in sorted((used & DYN_LIB) - preloaded - defs):
+                errors.append("%s: '%s' is loaded only at run time (lbm_dyn_lib): use it once at top "
+                              "level before (image-save), or the flash image write pointer gets stale "
+                              "('Attempted to write to const heap ... already occupied')" % (path, name))
         check_uses(forms, defs, funcs, consts, errors, path)
         for e in errors:
             print(e)
