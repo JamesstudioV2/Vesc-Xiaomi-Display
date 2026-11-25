@@ -49,7 +49,7 @@
   <text x="282" y="290" text-anchor="end" font-size="12">470 Ω</text>
   <text x="282" y="305" text-anchor="end" font-size="12">felhúzó</text>
 
-  <!-- első lámpa fokozat: a gate a HÁTSÓ vezérlő SWD csatlakozójának SWCLK (vagy SWDIO) lábán -->
+  <!-- külső lámpa fokozat: a gate a HÁTSÓ vezérlő SWD csatlakozójának SWCLK (vagy SWDIO) lábán -->
   <text x="510" y="125" text-anchor="end" font-weight="bold" fill="#1565c0">SWD: SWCLK / SWDIO →</text>
   <line x1="520" y1="120" x2="650" y2="120" stroke="#1565c0" stroke-width="3"/>
   <circle cx="600" cy="120" r="4" fill="#212121"/>
@@ -66,7 +66,7 @@
   <use href="#lamp" x="700" y="45"/>
   <line x1="700" y1="31" x2="700" y2="16" stroke="#212121" stroke-width="2"/>
   <text x="710" y="20" font-size="12">+ lámpa táp</text>
-  <text x="722" y="50" font-weight="bold">Első lámpa</text>
+  <text x="722" y="50" font-weight="bold">Külső lámpa</text>
   <text x="722" y="68" font-size="12">(hátsó VESC SWD: SWCLK vagy SWDIO)</text>
   <line x1="700" y1="145" x2="700" y2="165" stroke="#212121" stroke-width="2"/>
   <use href="#gnd" x="700" y="165"/>

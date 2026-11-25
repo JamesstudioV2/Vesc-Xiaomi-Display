@@ -12,10 +12,8 @@ class Link:
     """Hátsó + első vezérlő a CAN-en összekötve (a hátsó parancsa az első
     on-cmd-jébe, az első visszajelzése a hátsó on-front-ack-jába megy)."""
 
-    def __init__(self, p2=True, lamp_on_front=False):
+    def __init__(self, p2=True):
         self.r = Rear()
-        if lamp_on_front:
-            self.r.i.set("headlight-on-front", True)
         self.f = Interp()
         self.fv = self.f.vesc
         self.f.load(FRONT)
@@ -77,20 +75,20 @@ class DashLightTests(unittest.TestCase):
         self.assertEqual(r.last_dash()[8], 1)
 
 
-class FrontLampTests(unittest.TestCase):
-    def test_ack_reports_lamp_pin_version_and_speed(self):
-        L = Link(p2=False, lamp_on_front=True)
+class FrontAckTests(unittest.TestCase):
+    """Az első vezérlő visszajelzése (verzió, sebesség, VESC hiba); lámpa ott nincs."""
+
+    def test_ack_reports_version_and_speed(self):
+        L = Link(p2=False)
         L.fv.speed_ms = -12.3 / 3.6
         L.r.i.set("light", True)
         L.step(6)
-        self.assertEqual(L.fv.out("pin-ppm"), 1, "front PPM drives the lamp MOSFET")
+        self.assertEqual(L.r.v.out("pin-swclk"), 1, "the lamp is on the rear")
+        self.assertNotIn("pin-ppm", L.fv.gpio_mode, "the front touches no lamp pin")
         ack = [d for sid, d in L.fv.can_tx if sid == 0x4D1][-1]
         self.assertEqual(len(ack), 8)
-        self.assertEqual(ack[4] & 1, 1, "lamp command")
-        self.assertEqual(ack[4] & 4, 4, "pin read back high")
+        self.assertEqual(ack[4] & 5, 0, "no lamp bits")
         self.assertEqual(ack[5], 2, "script version")
-        self.assertTrue(L.r.g("front-lamp"))
-        self.assertEqual(L.r.g("front-pin"), 1)
         self.assertEqual(L.r.g("front-version"), 2)
         self.assertAlmostEqual(L.r.g("front-speed"), -12.3, places=5)
 
@@ -109,7 +107,7 @@ class FrontLampTests(unittest.TestCase):
             r.i.call("on-front-ack", 0x4D1, bytearray([0xA5, 0, 100]))  # 1-es verzió: 3 bájt
         self.assertEqual(r.g("front-version"), 1)
         self.assertTrue(r.g("front-old"))
-        self.assertEqual(r.last_dash()[11], 60, "old front script: lamp and TC cannot work")
+        self.assertEqual(r.last_dash()[11], 60, "old front script: TC cannot work")
 
     def test_current_front_script_no_error(self):
         L = Link(p2=False)
@@ -118,31 +116,6 @@ class FrontLampTests(unittest.TestCase):
         self.assertFalse(L.r.g("front-warn"))
         self.assertEqual(L.r.last_dash()[11], 0)
 
-    def test_front_lamp_test_overrides_command_and_restores(self):
-        f = Interp()
-        f.load(FRONT)
-        f.call("init")
-        fv = f.vesc
-        f.call("on-cmd", bytearray([0xA5, 3, 100, 0x27, 0x10, 0x3A, 0x98, 2]))  # lámpa KI
-        f.set("lamp-test", True)
-        f.call("on-cmd", bytearray([0xA5, 3 | 4, 100, 0x27, 0x10, 0x3A, 0x98, 2]))
-        self.assertEqual(fv.out("pin-ppm"), 0, "the command does not touch the pin during the test")
-        f.set("lamp-test", None)
-        f.call("lampa-teszt")
-        self.assertEqual(fv.out("pin-ppm"), 1, "after the test the commanded state (ON) is restored")
-        self.assertIsNone(f.get("lamp-test"))
-        text = " ".join(str(a) for p in fv.printed for a in p)
-        self.assertIn("BE  (lab = 1)", text)
-        self.assertIn("KI  (lab = 0)", text)
-
-    def test_rear_lamp_test_runs_and_flags_old_front(self):
-        r = Rear()
-        r.i.set("headlight-on-front", True)
-        r.boot_p1()
-        r.i.call("lampa-teszt")
-        text = " ".join(str(a) for p in r.v.printed for a in p)
-        self.assertIn("REGI", text)
-        self.assertIsNone(r.g("light"), "the original state is restored")
 
 
 class TractionTests(unittest.TestCase):
@@ -355,71 +328,11 @@ def printed(v):
     return " ".join(str(a) for p in v.printed for a in p)
 
 
-class LampDiagnosisTests(unittest.TestCase):
-    """A két (lampa-teszt) a végén kiírja, mire lehet következtetni."""
-
-    def front(self):
-        f = Interp()
-        f.load(FRONT)
-        f.call("init")
-        return f
-
-    def test_front_healthy_pin(self):
-        f = self.front()
-        f.call("lampa-teszt")
-        self.assertIn("EREDMENY: a vezerlo laba rendben kapcsol", printed(f.vesc))
-        self.assertIn("App to Use: 0", printed(f.vesc))
-
-    def test_front_pin_stuck_low(self):
-        f = self.front()
-        f.vesc.gpio_in["pin-ppm"] = 0       # zárlatos gate vagy sérült láb: mindig 0
-        f.call("lampa-teszt")
-        self.assertIn("bekapcsolva sem megy magasra", printed(f.vesc))
-
-    def test_front_warns_about_ppm_app(self):
-        f = self.front()
-        f.vesc.conf["app-to-use"] = 1
-        f.call("lampa-teszt")
-        self.assertIn("PPM app fut", printed(f.vesc))
-
-    def cosim(self, L, pump=True):
-        """A teszt alatti alvás közben a két vezérlő valóban fut és kommunikál."""
-        def sleep(secs):
-            for _ in range(max(1, int(round(secs / STEP)))):
-                if pump:
-                    L.step(1)
-                else:
-                    L.r.step(1)
-            return True
-        L.r.i.builtins["sleep"] = sleep
-
-    def test_rear_verdict_healthy(self):
-        L = Link(p2=False, lamp_on_front=True)
-        self.cosim(L)
-        L.r.i.call("lampa-teszt")
-        text = printed(L.r.v)
-        self.assertIn("Elso script verzio: 2 (rendben)", text)
-        self.assertIn("lab 1, elso vezerlo parancs BE", text)
-        self.assertIn("EREDMENY: a parancs eljut, az elso vezerlo PPM laba kapcsol", text)
-        self.assertIsNone(L.r.g("light"), "the original state is restored")
-
-    def test_rear_verdict_front_pin_stuck_low(self):
-        L = Link(p2=False, lamp_on_front=True)
-        L.fv.gpio_in["pin-ppm"] = 0
-        self.cosim(L)
-        L.r.i.call("lampa-teszt")
-        self.assertIn("nem megy magasra", printed(L.r.v))
-
-    def test_rear_verdict_front_silent(self):
-        L = Link(p2=False, lamp_on_front=True)
-        self.cosim(L, pump=False)
-        L.r.v.now += 2.0
-        L.r.i.call("lampa-teszt")
-        self.assertIn("EREDMENY: az elso vezerlo nem koveti", printed(L.r.v))
+class LampPinChoiceTests(unittest.TestCase):
+    """A lámpa lába a hátsón átállítható (headlight-pin)."""
 
     def test_headlight_on_rear_swd_pin(self):
         r = Rear()
-        r.i.set("headlight-on-front", None)
         r.i.set("headlight-pin", __import__("lbm_sim").Symbol("pin-swdio"))
         r.i.call("boot")
         r.boot_p1()
@@ -658,8 +571,8 @@ class BootGlitchTests(unittest.TestCase):
         i.run("(gpio-write 'pin-swclk 0)")
         self.assertEqual([lvl for (_, p, lvl) in i.vesc.pin_log if p == "pin-swclk"], [1, 0])
 
-    def test_front_lamp_pin_never_high_at_boot(self):
+    def test_front_drives_no_pin_at_boot(self):
         f = Interp()
         f.load(FRONT)
         f.call("init")
-        self.assertEqual([lvl for (_, p, lvl) in f.vesc.pin_log if p == "pin-ppm"], [0])
+        self.assertEqual(f.vesc.pin_log, [], "no lamp on the front controller")

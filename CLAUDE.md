@@ -21,8 +21,10 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   nem villan fel). 2026-11-23 (5): ugyanaz a jel az **SWDIO**-n is (`headlight-pin2 'pin-swdio`, nil = ki), mert a
   felhasználónál az SWCLK-ra kötve sem ment; `headlight-mode` `'pin-mode-out` (alap) vagy `'pin-mode-od` (1 kΩ 5V-ra,
   5 V-os gate; PA13/PA14 5 V-tűrő). Előtte: hátsó ADC2 (nem működött, az ADC bemenet védőköre), majd az első vezérlő PPM lába (nem
-  működött, valószínű nyáksérülés). Opció: `headlight-on-front t` = az első PPM lábán, CAN flags bit2, az első
-  `light-pin`. A `'pin-ppm` a 75_100_V2 / MKSESC V2 lapokon PB6 (TIM4 CH1). Minden ágon.
+  működött). **Megerősítve (2026-11-25): a hátsó SWD csatlakozón működik**, gázadásra sem villog. A felhasználó
+  kérésére az **első vezérlőből minden lámpás rész törölve** (`light-pin`, `front-light`, `lamp-test`, az első
+  `(lampa-teszt)`, `conf-try`), a hátsóból a `headlight-on-front` opció és a `front-lamp`/`front-pin` is. Az első
+  script egy lábhoz sem nyúl. Minden ágon.
 - Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
   lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
   A 0x64 a gyári vezérlő értéke (camcamfresh, Arduino-fórum: „0x64 = on”); a Koxx3 SmartESC m365 0/1-et küld.
@@ -35,10 +37,11 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   konfigurálható (`tc-icon-field`/`tc-icon-bit`); a felhasználó választhat ikont. `(ikon-teszt)`: 14 lépés, 3 s,
   a lépés száma a sebesség helyén: lámpa mező 1,2,4,…,128,100,255 (csere), mód mező +8,+32,+64,+128 (hozzáadva);
   teszt közben a TC (és az AB lakat) jelzés szünetel.
-- CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit0 lámpa parancs,
-  bit1 BNO friss, bit2 lámpa láb visszaolvasva), script-verzió (2), első sebesség (i16, 0,1 km/h). A hátsó
-  `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)` mindkét
-  vezérlőn, `(tc-teszt)` a hátsón, `(bno)` az elsőn.
+- CAN visszajelzés (0x4D1) **2-es verzió**, 8 bájt: A5, flags, áram %, VESC hibakód, állapot (bit1 BNO friss; a
+  bit0/bit2 a korábbi első lámpáé, 2026-11-25 óta mindig 0), script-verzió (2), első sebesség (i16, 0,1 km/h). A
+  parancs (0x4D0) flags 2-es bitje sem használt. A formátum nem változott, ezért a verzió 2 maradt. A hátsó
+  `front-min-version` 2-t vár, régi első scriptnél a kijelzőn **60**-as hiba. Konzol: `(lampa-teszt)`,
+  `(ikon-teszt)`, `(tc-teszt)` a hátsón, `(bno)` az elsőn.
 - Kipörgésgátló (minden ágon egységesen): csak 2-es profilban, induláskor be, **3 kattintás** = be/ki + 3 sípolás.
   **Csak az első kereket korlátozza a hátsóhoz képest, a hátsóba nem avatkozik bele** (2026-11-23, a felhasználó
   kérése; nincs `tc-rear`). `tc-slip` 2 km/h (ennyivel lehet gyorsabb az első), `tc-range` 3 km/h alatt 0-ig,
@@ -204,11 +207,15 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   bluetooth ikon” → a TC jelzés alapból ki. Nyitott: „gázadásra a lámpa villog” (melyik lámpa? féklámpa = hamis
   fékjel? külső lámpa = gombzaj vagy táp?), a kijelző lámpája az ikon-tesztben, melyik ikon jelezze a TC-t.
 
+- 2026-11-25 (3): A felhasználó: a lámpát a hátsó vezérlő SWD csatlakozójára téve **gond nélkül működik**, és
+  gázadásra sem villog (az előző „gázadásra villog” jelzés egy korábbi bekötéssel volt). Kérés: az első
+  vezérlőről a lámpás részek törlése, README ennek megfelelően. Kész (ld. fent); a tesztek közül az első
+  vezérlős lámpa tesztjei törölve, helyettük: az első egy lábhoz sem nyúl, a hátsó nem küld lámpa bitet.
+  119 teszt a main-en. A rajzon „Külső lámpa” (nem „Első lámpa”).
+
 ## Következő lépések
-1. Lámpa (az új, betölthető scriptekkel): a hátsó `(lampa-teszt)` `EREDMENY:` sora, a gate–GND mért feszültség, és a csere-próba (a lámpa MOSFET
-   jelvezetéke a PPM lábra: ha ott ég, a modul jó és a SWD bekötés a hibás). Kijelző lámpa és BT ikon:
-   `(ikon-teszt)` — melyik lépésnél gyullad ki a lámpa, illetve a Bluetooth ikon (-> `dash-light-value`,
-   `tc-icon-field`/`tc-icon-bit`). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés), és melyik
+   ikon jelezze a kipörgésgátlót (a Bluetooth nem vezérelhető). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
    BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
    `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
    AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
