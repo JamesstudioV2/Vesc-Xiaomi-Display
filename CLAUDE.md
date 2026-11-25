@@ -62,6 +62,15 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   szimbólumot a kiterjesztés-táblába tesz (natív könyvtáraknak), és a definiálás betöltéskor „Cannot redefine
   built-in” hibával leállítja az egész scriptet. A `tools/lisp_check.py` és a szimulátor ezt (és a beépített nevek
   felüldefiniálását, a `@const-start` utáni felső szintű `def`-et) hibának jelzi.
+- **Szöveghossz-szabály:** egy szöveg (string) vagy szimbólum legfeljebb **256 bájt** lehet
+  (`lispBM/include/tokpar.h`: `TOKENIZER_MAX_SYMBOL_AND_STRING_LENGTH 256`), a hosszabbnál a betöltés
+  **`read_error`**-ral leáll (2026-11-25, a felhasználó képernyőképe: AB hátsó, 1460. sor 29. oszlop, 387 bájt).
+  Hosszú konzolüzenet = több rövid `print`. Az ellenőrző és a szimulátor olvasója ezt is hibának jelzi.
+- **SWD lábak induláskor (firmware):** `hwconf/board.h` minden láb ODR-jét 1-re állítja, a PA13/PA14 lebeg (nincs
+  pull); a `main.c` `should_reset_config()` a PA14-et (SWCLK) rövid ideig kimenetként hajtja, és ha a HALL2 követi,
+  **törli a beállításokat** (HALL2–SWCLK jumper). Ezért a script előbb `gpio-write`, utána `gpio-configure`
+  (különben egy pillanatra magas), és a gate-re 10 kΩ lehúzó kell. A felhasználó „induláskor felvillan” jelzése
+  ebből jön; ez nem bizonyítja, hogy a MOSFET 3,3 V-tal nyit (a lebegő gate magasabbra is töltődhet).
 - Indulás: `boot` = `init` (motorkimenet tiltás, féklámpa, pufferek, **kijelző UART + rx szál elsőként**) + `init-rest`
   (ADC TC, gáz-kalibráció, mód, CAN), mindkettő `trap`-ben, hiba esetén `hiba-init...` a konzolon.
 - Gáz/fék: a kijelzőről → `app-adc-override` → ADC app (VESC Tool-ban hangolható). Control Type: Current No Reverse Brake ADC2.
@@ -164,8 +173,17 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   `(ikon-teszt)` (kijelző lámpa érték és BT ikon keresése), Bluetooth ikon = TC jelzés. A szimulátor a firmware
   lábneveit/módjait ellenőrzi, nyitott drain + felhúzó + zárlat modell, `sym2str`. 120 teszt a main-en.
 
+- 2026-11-25: A felhasználó képernyőképe: az új hátsó script (AB) betöltése `read_error`, 1460. sor 29. oszlop: a
+  `(lampa-teszt)` egyik `EREDMENY` szövege 387 bájtos volt, a 7.00-s olvasó 256-ot enged (mindhárom ágon ugyanez).
+  Javítva: több rövid `print`; az ellenőrző és a szimulátor olvasója 256 bájt fölött hibát ad (a régi scriptre
+  pontosan a felhasználó sor/oszlop hibáját adja). A felhasználó jelzése: „az SWCLK-ra kötve minden indulásnál
+  felvillan a lámpa”, és a gyári (kijelző) lámpa sem ég. Ok a villanásra: board.h ODR=1 + lebegő SWD lábak +
+  `should_reset_config()` + a régi init sorrendje (előbb kimenet, utána 0). Javítva: előbb `gpio-write`, utána
+  `gpio-configure` (hátsó lámpa lábak, féklámpa, első `light-pin`); a szimulátor a board.h ODR=1-et és a hajtott
+  szintek naplóját (`pin_log`) modellezi, teszt: induláskor a lámpa lába nem megy magasra. 126 teszt a main-en.
+
 ## Következő lépések
-1. Lámpa: a hátsó `(lampa-teszt)` `EREDMENY:` sora, a gate–GND mért feszültség, és a csere-próba (a lámpa MOSFET
+1. Lámpa (az új, betölthető scriptekkel): a hátsó `(lampa-teszt)` `EREDMENY:` sora, a gate–GND mért feszültség, és a csere-próba (a lámpa MOSFET
    jelvezetéke a PPM lábra: ha ott ég, a modul jó és a SWD bekötés a hibás). Kijelző lámpa és BT ikon:
    `(ikon-teszt)` — melyik lépésnél gyullad ki a lámpa, illetve a Bluetooth ikon (-> `dash-light-value`,
    `tc-icon-field`/`tc-icon-bit`). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).

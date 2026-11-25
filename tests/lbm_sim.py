@@ -61,6 +61,23 @@ INT = re.compile(r"^-?(0x[0-9a-fA-F]+|\d+)$")
 FLOAT = re.compile(r"^-?(\d+\.\d*|\.\d+)$")
 
 
+MAX_TOKEN_LEN = 256   # lispBM tokpar.h (7.00): hosszabb szöveg/szimbólum -> read_error
+
+
+def token_len(kind, val):
+    if kind != "string":
+        return len(val.encode("utf-8"))
+    n, esc = 0, False
+    for ch in val[1:-1]:
+        if esc:
+            n, esc = n + 1, False
+        elif ch == "\\":
+            esc = True
+        else:
+            n += len(ch.encode("utf-8"))
+    return n
+
+
 def read_all(text):
     toks = []
     pos = 0
@@ -69,7 +86,12 @@ def read_all(text):
         if not m:
             raise LispError("cannot read near %r" % text[pos:pos + 30])
         if m.lastgroup not in ("ws", "comment"):
-            toks.append((m.lastgroup, m.group(m.lastgroup)))
+            kind, val = m.lastgroup, m.group(m.lastgroup)
+            if kind in ("string", "atom") and token_len(kind, val) > MAX_TOKEN_LEN:
+                line = text.count("\n", 0, pos) + 1
+                raise LispError("read_error: %d bajtos %s a %d. sorban (a 7.00-s olvaso legfeljebb "
+                                "%d-et enged)" % (token_len(kind, val), kind, line, MAX_TOKEN_LEN))
+            toks.append((kind, val))
         pos = m.end()
     out = []
     i = 0
@@ -177,7 +199,9 @@ class Vesc:
         }
         self.conf_log = []
         self.gpio_mode = {"pin-rx": "uart-af", "pin-tx": "uart-af"}
-        self.gpio = {}
+        # hwconf/board.h: induláskor minden láb kimeneti regisztere (ODR) 1
+        self.gpio = {p: 1 for p in GPIO_PINS}
+        self.pin_log = []          # (idő, láb, szint): minden változás a hajtott szintben
         self.gpio_in = {"pin-rx": 1}  # external level on input pins (button released = 1)
         self.uart_started = None
         self.rx = []
@@ -641,18 +665,26 @@ class Interp:
             if not isinstance(pin, Symbol) or str(pin) not in GPIO_PINS:
                 raise LispError("gpio: invalid pin %r" % (pin,))
 
+        def log_pin(pin):
+            lvl = v.out(pin)
+            last = [e for e in v.pin_log if e[1] == pin]
+            if lvl is not None and (not last or last[-1][2] != lvl):
+                v.pin_log.append((v.now, str(pin), lvl))
+
         def gpio_configure(pin, mode):
             gpio_check(pin)
             if not isinstance(mode, Symbol) or str(mode) not in GPIO_MODES:
                 raise LispError("gpio-configure: invalid mode %r" % (mode,))
             v.gpio_mode[pin] = mode
+            log_pin(pin)
             return True
 
         def gpio_write(pin, val):
+            # palWritePad: a kimeneti regisztert (ODR) írja bármely módban; a láb
+            # csak kimenet módban hajtja (Vesc.out()).
             gpio_check(pin)
-            if pin not in v.gpio_mode:
-                raise LispError("gpio-write to %s which was never configured" % pin)
-            v.gpio[pin] = need_int(val, 0, 1, "gpio-write")  # ODR, see Vesc.out()
+            v.gpio[pin] = need_int(val, 0, 1, "gpio-write")
+            log_pin(pin)
             return True
 
         def uart_start(*a):

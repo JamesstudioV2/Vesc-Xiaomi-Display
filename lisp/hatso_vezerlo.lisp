@@ -807,14 +807,21 @@
             {
                 (print (str-merge "EREDMENY: " (lamp-verdict headlight-pin hi1 ons lo1 offs)
                         (if two (str-merge ", " (lamp-verdict headlight-pin2 hi2 ons lo2 offs)) "")))
-                (print (cond
-                        ((or (and (= hi1 ons) (= lo1 offs)) (and two (= hi2 ons) (= lo2 offs)))
-                            "-> A vezerlo oldala jo. Ha a lampa megsem villogott: merd a MOSFET gate es a GND kozott. Ott sincs fesz: rossz labon van a vezetek (az SWD csatlakozon a 3,3 V, GND, NRST nem jo) vagy szakadt. Van fesz, megsem kapcsol: a MOSFET 3,3 V-tal nem nyit ki (headlight-mode 'pin-mode-od + 1 kOhm 5 V-ra, vagy logikai szintu MOSFET), vagy a lampa tapjanak a GND-je nincs osszekotve a VESC GND-vel.")
-                        ((eq headlight-mode 'pin-mode-od)
-                            "-> Nyitott drain modban a labat egy 1 kOhm-os ellenallas huzza 5 V-ra: ez hianyzik, vagy a gate-et GND-re huzo ellenallas tul kicsi.")
-                        ((= hi1 0)
-                            "-> Huzd le a lampa vezeteket es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos, vagy tul kicsi ellenallas huzza GND-re.")
-                        (t "-> Laza erintkezes vagy tulterheles?")))
+                ; (A 7.00-s olvasóban egy szöveg legfeljebb 256 karakter: a hosszabb
+                ; betöltéskor read_error. Ezért több rövid sor.)
+                (cond
+                    ((or (and (= hi1 ons) (= lo1 offs)) (and two (= hi2 ons) (= lo2 offs)))
+                        {
+                            (print "-> A vezerlo oldala jo. Ha a lampa megsem villogott, merd a MOSFET gate es a GND kozott.")
+                            (print "   Nincs fesz: a vezetek nem az SWCLK/SWDIO labon van (3,3 V, GND, NRST nem jo), vagy szakadt.")
+                            (print "   Van fesz, megsem kapcsol: a MOSFET-nek 3,3 V keves (headlight-mode 'pin-mode-od + 1 kOhm 5 V-ra,")
+                            (print "   vagy logikai szintu MOSFET), vagy a lampa tapjanak GND-je nincs a VESC GND-jen.")
+                        })
+                    ((eq headlight-mode 'pin-mode-od)
+                        (print "-> Nyitott drain modban egy 1 kOhm-os ellenallas kell a lab es az 5 V koze: ez hianyzik, vagy a gate-et GND-re huzo ellenallas tul kicsi."))
+                    ((= hi1 0)
+                        (print "-> Huzd le a lampa vezeteket es futtasd ujra: ha ugy jo, a MOSFET gate zarlatos, vagy tul kicsi ellenallas huzza GND-re."))
+                    (t (print "-> Laza erintkezes vagy tulterheles?")))
             })
 })
 
@@ -853,10 +860,13 @@
         (app-adc-detach 3 1)
         (app-disable-output -1)
 
-        (gpio-configure 'pin-ppm 'pin-mode-out)     ; féklámpa
-        (gpio-write 'pin-ppm 1)
-        (lamp-config)                                ; első lámpa a hátsó vezérlő lábain
-        (lamp-write (if light 1 0))
+        ; Előbb a kimeneti szint, utána a kimenet mód: a firmware (board.h) az SWD
+        ; lábak kimeneti regiszterét induláskor 1-re állítja, így fordított
+        ; sorrendben a lámpa egy pillanatra felvillanna.
+        (gpio-write 'pin-ppm 1)                      ; féklámpa
+        (gpio-configure 'pin-ppm 'pin-mode-out)
+        (lamp-write (if light 1 0))                  ; első lámpa a hátsó vezérlő lábain
+        (lamp-config)
 
         ; uart-read-bytes az olvasott bájtok után egy 0-t is ír, ezért +1 hely kell
         (def rx-one (bufcreate 2))

@@ -622,3 +622,28 @@ class IconTestTests(unittest.TestCase):
         seen = self.run_test(r)
         self.assertEqual([f[8] for f in seen[10:]], [0, 0, 0, 0], "no TC bit while testing")
         self.assertEqual(r.last_dash()[8], 2, "TC icon back after the test")
+
+
+class BootGlitchTests(unittest.TestCase):
+    """A board.h induláskor minden láb kimeneti regiszterét 1-re állítja: a lámpa lába
+    ne menjen magasra, mire a script 0-t ír (a felhasználó indulási villanást látott)."""
+
+    def test_lamp_pins_never_high_at_boot(self):
+        r = Rear()
+        r.boot_p1()
+        for pin in ("pin-swclk", "pin-swdio"):
+            levels = [lvl for (_, p, lvl) in r.v.pin_log if p == pin]
+            self.assertEqual(levels, [0], pin)
+
+    def test_wrong_order_would_glitch(self):
+        """A szimulátor észreveszi a hibás sorrendet (kimenet előbb, szint utána)."""
+        i = Interp()
+        i.run("(gpio-configure 'pin-swclk 'pin-mode-out)")
+        i.run("(gpio-write 'pin-swclk 0)")
+        self.assertEqual([lvl for (_, p, lvl) in i.vesc.pin_log if p == "pin-swclk"], [1, 0])
+
+    def test_front_lamp_pin_never_high_at_boot(self):
+        f = Interp()
+        f.load(FRONT)
+        f.call("init")
+        self.assertEqual([lvl for (_, p, lvl) in f.vesc.pin_log if p == "pin-ppm"], [0])
