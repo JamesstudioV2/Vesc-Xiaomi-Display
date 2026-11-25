@@ -17,8 +17,19 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   lenyomva GND. Digitális olvasás (`gpio-read`, `button-pin` = `'pin-rx`), pergésmentesítés: 3 minta le, 2 minta fel.
 - **ADC1: szabad** (10 kΩ-mal GND-re ajánlott, hogy indításkor ne lebegjen).
 - App to Use: csak `ADC` (UART-os appnál a `uart-start` véglegesen No App-ra állítja).
-- Bluetooth: a kijelző BLE-je **nem** használható VESC Tool-hoz. Javaslat: VESC Express a CAN-en (kész modul, vagy
-  DIY ESP32-S3 + SN65HVD230, a `S3 N16R8` / `S3 FH4R2` target CAN-je GPIO16 TX / GPIO17 RX). README: „Bluetooth (VESC Tool)”.
+- Bluetooth: a **gyári** kijelző BLE-je nem használható VESC Tool-hoz (VESC Express a CAN-en, README).
+  **Az egyedi kijelző-firmware-rel igen** (2026-11-25, [M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE)):
+  a kijelző a NUS-on kapott VESC bájtfolyamot TUNNEL_UP bővítő keretben küldi, a hátsó script `cmds-proc`-kal
+  adja a VESC parancsfeldolgozójának, a válasz (`event-cmds-data-tx`, a `can-event-loop` kapja) egy gyűrűbe
+  (`tun-buf`, 1536 B) megy, és TUNNEL_DOWN keretekben (≤ 100 B, ≤ a kijelző kreditje) jut vissza.
+  A 7.00 `cmds-proc` szinkron dolgozik fel, a parancs külön szálon fut, futás közben az újat eldobja.
+  Lisp feltöltés ezen az úton nem megy (a script viszi a kapcsolatot).
+- Egyedi kijelző (csak a main alapú ágon, 2026-11-25): felismerés HELLO (0x64 válasz után, 1/s) →
+  HELLO_ACK; bővítő keretek `cmd 0x7A`, kijelzőkeretenként legfeljebb egy (`dx-reply`): név, LED felülírás
+  (TC jelzés `tc-seg-byte`/`tc-seg-bit`, alap BT ikon, beavatkozáskor villog; `(led-teszt)`), életjel/STYLE
+  (`speed-color`) 1/s, egyszeri parancs (`dash-text`), alagút. A kijelző 0x7A keretei gáz/fék keretek is
+  (`lever-input 4`). 5 s csend → `dash-custom` nil. A gyári BLE129 a bővítő kereteket figyelmen kívül hagyja
+  (a kijelző repójában emulátorral ellenőrizve). `ext-` névszabály miatt a segédfüggvények `dx-` előtagúak.
 - Féklámpa: **PPM** láb → N-FET. Alapból folyamatosan ég, fékezéskor villog.
 - Első (külső) lámpa: **a hátsó vezérlő SWD csatlakozójának SWCLK lábán** → N-FET (2026-11-23, a felhasználó kérése:
   `headlight-on-front nil`, `headlight-pin 'pin-swclk`; az SWCLK-t a processzor induláskor lehúzza, így bootoláskor
@@ -29,8 +40,9 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   kérésére az **első vezérlőből minden lámpás rész törölve** (`light-pin`, `front-light`, `lamp-test`, az első
   `(lampa-teszt)`, `conf-try`), a hátsóból a `headlight-on-front` opció és a `front-lamp`/`front-pin` is. Az első
   script egy lábhoz sem nyúl. Minden ágon.
-- Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`), a 6-os bit kapcsolja a kijelző saját
-  lámpáját (lucidnx). Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
+- Kijelző lámpája: a lámpa mezőbe **100 (0x64)** megy (`dash-light-value`). **A gyári BLE129 visszafejtése
+  (2026-11-25): bármely nem nulla érték** bekapcsolja a kijelző lámpakimenetét (P0.03), az ikont, és 7-ről 2-re
+  veszi a fényerőt; a „6-os bit” (lucidnx) a BLE129-re nem igaz. Az 1-es érték csak az ikont gyújtotta ki (ez volt a „csak az ikon jelenik meg” hiba).
   A 0x64 a gyári vezérlő értéke (camcamfresh, Arduino-fórum: „0x64 = on”); a Koxx3 SmartESC m365 0/1-et küld.
   A kijelző lámpája a kijelző tápjáról (VESC 5V) ég (gyári M365-ön ~4,1 V jön fel). A felhasználónál 100-zal
   sem ég (2026-11-23): `(ikon-teszt)` 7. (64) / 9. (100) lépés, ha egyiknél sem: táp / lámpa bekötés.
@@ -179,6 +191,9 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
 - `tests/lbm_sim.py` + `tests/test_scripts.py` + `tests/test_advanced_balance.py` + `tests/test_errors.py`: szimulátor és tesztek
   (`python3 -m unittest discover -s tests`). `tests/test_lamp_tc.py` (lámpa, kipörgésgátló), `tests/test_bno085.py`
   (BNO085 meghajtó), `tests/test_ab_tc_save.py` (két TC AB módban, célszög mentés, BNO szög, 60/61/62).
+  A szimulátor `uart-write`-ja a bővítő kereteket (cmd 0x7A) a `v.ext_tx`-be, a többit a `v.tx`-be teszi
+  (`v.tx_all`: mind); `bufcpy`, `free`, `mod`, `cmds-start-stop`, `cmds-proc` (`v.cmds_in`); a string bájttömb
+  lezáró 0-val. `tests/test_custom_dash.py`: az egyedi kijelző támogatása.
 - `tools/balansz_modell.py`: az Advanced Balance szögkorlátjának modellje.
 
 ## Állapot
@@ -286,9 +301,20 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   `conf-try` / `conf-set-try` csendes + nem ismert név megjegyzése (minden ágon). README: mit jelent az üzenet.
   Tesztek: 122 a main-en, 206 az Advanced-Balance ágon (a felhasználó ezt az ágat használja).
 
+- 2026-11-25 (4): A felhasználó kérésére egyedi kijelző-firmware készült a
+  [M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE) repóba (nRF51822 + S130,
+  gyári BLE129 visszafejtve, emulátorban tesztelve, valódi hardveren még nem). A hátsó script (ezen az ágon)
+  felismeri és használja: TC jelzés a BT ikonon (villog beavatkozáskor), `speed-color`, `ble-name`, VESC Tool a
+  kijelző Bluetooth-án (`cmds-proc` alagút), `(led-teszt)`, `(szin-teszt)`, `(dash-text ...)`. A kijelző repójában
+  3 végponttól végpontig teszt köti össze a lefordított firmware-t ezzel a scripttel. 144 teszt itt.
+  A Balance / Advanced-Balance ágakra még nincs átvezetve.
+
 ## Következő lépések
-1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés), és melyik
-   ikon jelezze a kipörgésgátlót (a Bluetooth nem vezérelhető). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
+0. Egyedi kijelző-firmware: felírás ST-Linkkel (a kijelző repó README), `(status)` → `kijelzo egyedi`,
+   `(led-teszt)`, `(szin-teszt)`, VESC Tool Bluetooth-on. Utána a Balance/AB ágak támogatása.
+1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés; a gyári
+   BLE129 bármely nem nulla értékre kapcsolja), és melyik ikon jelezze a kipörgésgátlót (gyári kijelzőn a
+   Bluetooth nem vezérelhető, egyedi firmware-rel igen). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).
    BNO085: az első vezérlő COM1-én, I2C-n (a felhasználó átkötötte). Kell: a `(bno)` kimenete az első vezérlőn és a
    `(szog)` a hátsón (balansz ágak scriptjeivel), utána a `balance-axis`/`-invert`/`-level-offset` beállítása.
    AB: a célszög mentés (fék + 5x) és a két kipörgésgátló próbája felemelt kerékkel.
