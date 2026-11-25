@@ -18,6 +18,13 @@ script kezeli.
 > indulás, [leírás lent](#balansz-mód-kísérleti)) van benne. **Kísérleti**, valódi
 > rolleren még nincs kipróbálva.
 
+A kijelzőhöz egyedi firmware is van:
+[M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE).
+Vele minden LED külön kapcsolható, a számjegyek fehérek vagy pirosak lehetnek, és
+a **VESC Tool a kijelző Bluetooth-án** keresztül is eléri a vezérlőket. A script
+gyári és egyedi kijelzővel is működik, ld.
+[Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
+
 > ⚠️ **Saját felelősségre.** Egy hibás beállítás vagy bekötés váratlan gyorsulást
 > vagy fékvesztést okozhat. Az első próbákat mindig **felemelt kerékkel** végezd.
 > A 2-es profil (korlátlan sebesség) közúton a legtöbb helyen nem használható
@@ -68,9 +75,12 @@ majd 5 Hz-cel villog, amíg a fékkar be van húzva.
 
 **Kijelzőn:** sebesség (km/h), akku töltöttség, mód (ECO/D/S), hőfok ikon
 (vezérlő ≥ 80 °C vagy motor ≥ 100 °C, mindkét vezérlőt figyeli), lámpa ikon és
-hibakód. A kijelző saját lámpáját a lámpa mező 6-os bitje kapcsolja: a script a
-gyári vezérlőhöz hasonlóan 100-at (0x64) küld (`dash-light-value`). A korábbi
-1-es érték csak az ikont gyújtotta ki.
+hibakód. A script a gyári vezérlőhöz hasonlóan 100-at (0x64) küld a lámpa
+mezőben (`dash-light-value`). A gyári BLE129 kijelző-firmware-t visszafejtve
+kiderült, hogy a kijelző a mező **bármely** nem nulla értékére bekapcsolja a
+saját lámpakimenetét (P0.03) és a lámpa ikont, és halványabbra veszi a
+kijelzőt. Ha a kijelzőre kötött lámpa mégsem ég, az hardveres ok, vagy egy
+eltérő gyári kijelző-firmware.
 
 **Gáz és fék:** a kijelző nyers gáz- és fékértékét a script az **ADC app**
 bemenetére küldi (`app-adc-override`). Így a tartomány, a holtjáték, a
@@ -341,7 +351,12 @@ gyújtotta ki (2026-11-25). A lámpa mező bármely bitje a **lámpa ikont** gy�
 ezért arra sem jó. Alapból tehát nincs ikon (`tc-icon-field -1`), a
 kipörgésgátló kapcsolását a 3 sípolás jelzi.
 
-Ha mégis egy ikon jelezze a bekapcsolt kipörgésgátlót (2-es profilban):
+**Egyedi kijelző-firmware-rel** bármelyik LED jelezheti, alapból a **Bluetooth
+ikon** (`tc-seg-byte 5`, `tc-seg-bit 64`): bekapcsolt kipörgésgátlónál ég, és
+villog, amíg az első kereket visszafogja. Más LED-hez: `(led-teszt)`, ld.
+[Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
+
+Gyári kijelzőn, ha mégis egy ikon jelezze a bekapcsolt kipörgésgátlót (2-es profilban):
 
 1. Hátsó vezérlő Lisp konzol: `(ikon-teszt)`. 14 lépés, 3 s-onként, a lépés
    száma a sebesség helyén látszik, a konzol kiírja, mit küld.
@@ -496,8 +511,11 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   (nyitott drain, 1 kΩ felhúzóval az 5V-ra: 5 V-os gate-jel).
 - `dash-light-value`: a kijelzőnek küldött lámpa érték (100 = a kijelző lámpája
   is ég, 1 = csak az ikon).
-- `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése a kijelzőn (alapból
-  -1 = nincs; a Bluetooth ikon nem vezérelhető). Választás: `(ikon-teszt)`.
+- `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése a gyári kijelzőn
+  (alapból -1 = nincs; a Bluetooth ikon nem vezérelhető). Választás: `(ikon-teszt)`.
+- `dash-ext`, `ble-vesc-tool`, `ble-name`, `speed-color`, `tc-seg-byte`,
+  `tc-seg-bit`: az egyedi kijelző-firmware beállításai, ld.
+  [Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
   állapota, mennyivel foroghat az első kerék gyorsabban a hátsónál (km/h), az a
   további különbség, amelynél az első hajtása nullára csökken (km/h), és a
@@ -571,26 +589,66 @@ scriptjében `t`: a BNO085-höz azok közül töltsd fel **mindkét** scriptet.
 Bekapcsoláskor a konzolon megjelenik: `BNO085 megtalalva, cim 0x4A` (felcserélt
 bekötésnél ezt is kiírja).
 
+## Egyedi kijelző-firmware
+
+A [M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE)
+egy csere-firmware a Pro 2 kijelzőjéhez (nRF51822, SWD-vel, ST-Linkkel írható fel).
+A gyári vezérlővel és ezzel a scripttel is a gyári kijelzőhöz hasonlóan működik, és
+bővítő parancsokat is tud.
+
+A hátsó script magától felismeri: a 0x64-re küldött állapotkeret után
+másodpercenként egy HELLO keretet küld, és az egyedi kijelző válaszol rá. A gyári
+kijelző a HELLO-t figyelmen kívül hagyja. Felismeréskor a konzolon ez jelenik meg:
+„Egyedi kijelzo-firmware felismerve”. A `(status)` utolsó sora mutatja:
+`kijelzo egyedi`.
+
+| Beállítás | Alap | Jelentés |
+|---|---|---|
+| `dash-ext` | `t` | az egyedi kijelző keresése és használata |
+| `ble-vesc-tool` | `t` | VESC Tool a kijelző Bluetooth-án át (`cmds-proc`, kb. 3 KB memória) |
+| `ble-name` | `nil` | Bluetooth név, pl. `"Roller-VESC"`; `nil` = a kijelző alapneve (`MIScooterXXXX`) |
+| `speed-color` | `0` | a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő |
+| `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon). -1 = nincs |
+
+Konzolparancsok (hátsó vezérlő):
+- `(led-teszt)`: 1,5 s-onként egyetlen LED világít a 48-ból (6 bájt × 8 bit).
+  A konzol kiírja a bájtot és a bit értékét; ezeket kell a `tc-seg-byte` /
+  `tc-seg-bit` sorba írni.
+- `(szin-teszt)`: „88” fehéren, pirosan, majd mindkét színnel.
+- `(dash-text "P2" 1 20)`: két karakter a sebesség helyén, piros színnel, 2 s-ig
+  (szín: 0 fehér, 1 piros, 2 mindkettő; idő ×100 ms).
+
+A protokoll leírása a kijelző repójában: `docs/protokoll.md`.
+
 ## Bluetooth (VESC Tool)
 
-A kijelző Bluetooth-a **nem használható** a VESC Tool-hoz:
+**Egyedi kijelző-firmware-rel a kijelző Bluetooth-a VESC Tool-hoz is
+használható.**
+1. A VESC Tool Bluetooth keresése listázza a kijelzőt (Nordic UART szolgáltatás).
+2. A VESC-csomagokat a kijelző a buszon át a hátsó vezérlőhöz továbbítja, ahol a
+   script a VESC parancsfeldolgozójának adja (`cmds-proc`). A válasz
+   (`event-cmds-data-tx`) ugyanígy jut vissza.
+3. Az első vezérlő a CAN-en át érhető el, mint USB-n.
+
+Korlátok:
+- A sebesség kb. 2–5 KB/s, mert a busz 115200 baudos, és a kijelző forgalma is
+  rajta van.
+- A **Lisp script feltöltése ezen az úton nem megy**, mert a kapcsolatot maga a
+  script viszi. Arra USB kell.
+- A firmware-frissítés is inkább USB-n menjen.
+- Jelszó nincs: aki a közelben kapcsolódik, át tudja állítani a vezérlőt.
+  Kikapcsolás: `(def ble-vesc-tool nil)`.
+
+**Gyári kijelzővel** a Bluetooth nem használható VESC Tool-hoz:
 - A VESC Tool csak a Nordic UART szolgáltatást (NUS) hirdető eszközöket
   listázza (Windows alatt mindet), és azon keresztül a VESC saját csomagjait
-  küldi. Ehhez VESC-firmware-es Bluetooth-modul kell: NRF modul vagy VESC Express.
-- A kijelző Bluetooth-a a Xiaomi zárt firmware-ét futtatja. Csak
-  Xiaomi-formátumú kereteket ad tovább a busz felé, és azokat is átalakítja (az
-  app olvasási kérésébe beleteszi a gáz- és fékértéket). A VESC-csomagokat
-  nem engedi át. A firmware-t nem lehet úgy lecserélni, hogy a kijelző közben
-  működjön.
-- Elvben egy saját, PC-n futó „híd” program a VESC-üzeneteket
-  Xiaomi-keretekbe csomagolva átjuttathatná. Ez viszont nagyon lassú lenne,
-  mert a kijelző a saját ütemében, másodpercenként néhányszor közvetít, és csak
-  PC-ről működne, a VESC Tool mobilappal nem. PC-n pedig az USB-kábel egyszerűbb.
+  küldi.
+- A gyári kijelző-firmware csak Xiaomi-formátumú, titkosított kereteket
+  továbbít.
 
-**Ajánlott megoldás: VESC Express a CAN-buszon.** A VESC Tool telefonról és
+Ilyenkor a megoldás a **VESC Express a CAN-buszon**: a VESC Tool telefonról és
 PC-ről is Bluetooth-on kapcsolódik hozzá, és a CAN-en keresztül mindkét
-vezérlőt eléri (beállítás, firmware, Lisp, naplózás). A kijelző UART-ját nem
-érinti, és a scripteken sem kell változtatni.
+vezérlőt eléri.
 - **Kész modul:** hivatalos VESC Express vagy egy vele kompatibilis modul.
 - **Házilag:** egy ESP32-S3 fejlesztőpanel és egy 3,3 V-os CAN transceiver
   (pl. SN65HVD230). A [VESC Express](https://github.com/vedderb/vesc_express)
@@ -622,5 +680,10 @@ python3 -m unittest discover -s tests -v
   két vezérlő közötti CAN-üzeneteket, a kipörgésgátlót és a BNO085 meghajtót
   (szimulált SHTP eszközzel). Ez nem a valódi LispBM, a hardveres próbát
   nem váltja ki.
+- `tests/test_custom_dash.py`: az egyedi kijelző-firmware támogatása (HELLO,
+  LED felülírás, stílus, név, VESC Tool alagút kredittel).
+- A kijelző repójában (`tests/test_vesc_lisp.py`) a lefordított kijelző-firmware
+  egy nRF51 emulátorban fut, és a buszon ezzel a scripttel van összekötve. A
+  teszt a szomszédos `Vesc-Xiaomi-Display` mappát használja.
 
 A projekt állapota és a döntések: [CLAUDE.md](CLAUDE.md).

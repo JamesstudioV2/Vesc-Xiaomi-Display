@@ -216,7 +216,9 @@ class Vesc:
         self.gpio_in = {"pin-rx": 1}  # external level on input pins (button released = 1)
         self.uart_started = None
         self.rx = []
-        self.tx = []
+        self.tx = []               # a kijelzőnek küldött gyári keretek (0x21 0x64)
+        self.ext_tx = []           # bővítő keretek (cmd 0x7A) az egyedi kijelző-firmware-nek
+        self.tx_all = []           # minden uart-write, sorrendben
         self.can_tx = []
         self.can_devs = []
         self.batt = 0.5
@@ -247,6 +249,10 @@ class Vesc:
         self.conf_get_calls = {}   # név -> hányszor hívták a conf-get-et
         self.gpio_short = set()    # lábak, amelyeket a külvilág GND-re húz (zárlatos gate)
         self.fail_conf = set()     # ezekre a nevekre a conf-set hibát dob (hibainjektálás)
+        self.freed = 0             # (free arr) hívások száma
+        self.cmds_started = False  # (cmds-start-stop t) után
+        self.cmds_fail = False     # a cmds-start-stop hibát dob (pl. kevés memória)
+        self.cmds_in = bytearray() # a cmds-proc-nak átadott bájtok (VESC Tool -> VESC)
 
     def out(self, pin):
         """Level actually on the pin when it is an output (None = not driven).
@@ -615,7 +621,12 @@ class Interp:
             need_int(addr, 0, 127, "eeprom-read-f")
             return v.eeprom.get(addr)
 
+        def str_bytes(x):
+            # a LispBM-ben a string bájttömb, a végén egy lezáró 0-val
+            return bytearray(x.encode("utf-8") + b"\0") if isinstance(x, LString) else x
+
         def bufget_u8(buf, i):
+            buf = str_bytes(buf)
             need_idx(buf, i, 1, "bufget-u8")
             return buf[i]
 
@@ -653,7 +664,14 @@ class Interp:
         def uart_write(buf):
             if v.uart_started is None:
                 raise LispError("eval_error: uart-write: UART not started")
-            v.tx.append(bytes(buf))
+            b = bytes(buf)
+            v.tx_all.append(b)
+            # a bővítő keretek (cmd 0x7A, egyedi kijelző-firmware) külön listába mennek,
+            # a v.tx a gyári protokoll kereteit tartalmazza
+            if len(b) > 4 and b[4] == 0x7A:
+                v.ext_tx.append(b)
+            else:
+                v.tx.append(b)
             return True
 
         def known_param(name, what):
@@ -779,6 +797,34 @@ class Interp:
             v.printed.append(a)
             return True
 
+        def bufcpy(dst, i1, src, i2, n):
+            # (bufcpy dst ind1 src ind2 len): a firmware a hosszt a tömbök végéig vágja
+            src = str_bytes(src)
+            if not isinstance(dst, bytearray):
+                raise LispError("bufcpy: not a buffer")
+            n = max(0, min(n, len(dst) - i1, len(src) - i2))
+            dst[i1:i1 + n] = src[i2:i2 + n]
+            return True
+
+        def free_arr(arr):
+            v.freed += 1
+            return True
+
+        def cmds_start_stop(start=Symbol("t")):
+            if v.cmds_fail:
+                raise LispError("cmds-start-stop: out of memory (injected)")
+            v.cmds_started = truthy(start)
+            return True
+
+        def cmds_proc(data):
+            # VESC parancsfeldolgozó: a bájtfolyamot gyűjti; a teszt a v.cmds_reply
+            # függvénnyel adhat választ (event-cmds-data-tx), amit a tesztnek kell
+            # a tun-push hívással kézbesítenie (a recv nincs szimulálva).
+            if not v.cmds_started:
+                raise LispError("eval_error: cmds-proc: Cmds not started")
+            v.cmds_in.extend(bytes(data))
+            return True
+
         return {
             "+": arith(add), "-": arith(sub), "*": arith(mul), "/": arith(div),
             "=": cmp(lambda a, b: a == b), "<": cmp(lambda a, b: a < b),
@@ -800,7 +846,7 @@ class Interp:
             "shl": lambda a, b: num(a) << num(b),
             "shr": lambda a, b: num(a) >> num(b),
             "bufcreate": lambda n: bytearray(n),
-            "buflen": lambda b: len(b),
+            "buflen": lambda b: len(str_bytes(b)),
             "bufset-u8": bufset_u8, "bufset-u16": bufset_u16,
             "bufget-u8": bufget_u8, "bufget-u16": bufget_u16,
             "bufset-i16": bufset_int(2, -32768, 32767, True, "bufset-i16"),
@@ -856,6 +902,9 @@ class Interp:
             "get-temp-mot": lambda: v.temp_mot,
             "get-batt": lambda: v.batt,
             "get-fault": lambda: v.fault,
+            "bufcpy": bufcpy, "free": free_arr,
+            "mod": lambda a, b: num(a) % num(b),
+            "cmds-start-stop": cmds_start_stop, "cmds-proc": cmds_proc,
         }
 
 
