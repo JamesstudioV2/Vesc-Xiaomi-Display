@@ -242,6 +242,9 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   A kijelző repójában javítva (**1.1**, `(status)`: `kijelzo egyedi fw 11`); az ottani emulátor busza
   azóta lábhelyes. Itt nem kellett változtatni (a protokoll ugyanaz).
 
+- 2026-11-26 (6): A felhasználó kérésére a README-ből kikerült a VESC Tool Bluetooth-kapcsolat (alagút)
+  leírása, mert még nem működik. A kód (TUNNEL, `ble-vesc-tool`) megmaradt, csak dokumentálatlan.
+
 ## Következő lépések
 0. Egyedi kijelző-firmware **1.1** felírása ST-Linkkel (a kijelző repó README), `(status)` → `keretek` nő,
    `kijelzo egyedi fw 11`,

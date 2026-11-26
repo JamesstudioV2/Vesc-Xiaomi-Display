@@ -15,8 +15,7 @@ script kezeli.
 
 A kijelzőhöz egyedi firmware is van:
 [M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE).
-Vele minden LED külön kapcsolható, a számjegyek fehérek vagy pirosak lehetnek, és
-a **VESC Tool a kijelző Bluetooth-án** keresztül is eléri a vezérlőket. A script
+Vele minden LED külön kapcsolható, és a számjegyek fehérek vagy pirosak lehetnek. A script
 gyári és egyedi kijelzővel is működik, ld.
 [Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
 
@@ -391,7 +390,7 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
   is ég, 1 = csak az ikon).
 - `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése a gyári kijelzőn
   (alapból -1 = nincs; a Bluetooth ikon nem vezérelhető). Választás: `(ikon-teszt)`.
-- `dash-ext`, `ble-vesc-tool`, `ble-name`, `speed-color`, `tc-seg-byte`,
+- `dash-ext`, `ble-name`, `speed-color`, `tc-seg-byte`,
   `tc-seg-bit`: az egyedi kijelző-firmware beállításai, ld.
   [Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
@@ -474,7 +473,6 @@ kijelző a HELLO-t figyelmen kívül hagyja. Felismeréskor a konzolon ez jeleni
 | Beállítás | Alap | Jelentés |
 |---|---|---|
 | `dash-ext` | `t` | az egyedi kijelző keresése és használata |
-| `ble-vesc-tool` | `t` | VESC Tool a kijelző Bluetooth-án át (`cmds-proc`, kb. 3 KB memória) |
 | `ble-name` | `nil` | Bluetooth név, pl. `"Roller-VESC"`; `nil` = a kijelző alapneve (`MIScooterXXXX`) |
 | `speed-color` | `0` | a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő |
 | `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon). -1 = nincs |
@@ -491,24 +489,7 @@ A protokoll leírása a kijelző repójában: `docs/protokoll.md`.
 
 ## Bluetooth (VESC Tool)
 
-**Egyedi kijelző-firmware-rel a kijelző Bluetooth-a VESC Tool-hoz is
-használható.**
-1. A VESC Tool Bluetooth keresése listázza a kijelzőt (Nordic UART szolgáltatás).
-2. A VESC-csomagokat a kijelző a buszon át a hátsó vezérlőhöz továbbítja, ahol a
-   script a VESC parancsfeldolgozójának adja (`cmds-proc`). A válasz
-   (`event-cmds-data-tx`) ugyanígy jut vissza.
-3. Az első vezérlő a CAN-en át érhető el, mint USB-n.
-
-Korlátok:
-- A sebesség kb. 2–5 KB/s, mert a busz 115200 baudos, és a kijelző forgalma is
-  rajta van.
-- A **Lisp script feltöltése ezen az úton nem megy**, mert a kapcsolatot maga a
-  script viszi. Arra USB kell.
-- A firmware-frissítés is inkább USB-n menjen.
-- Jelszó nincs: aki a közelben kapcsolódik, át tudja állítani a vezérlőt.
-  Kikapcsolás: `(def ble-vesc-tool nil)`.
-
-**Gyári kijelzővel** a Bluetooth nem használható VESC Tool-hoz:
+A kijelző Bluetooth-a nem használható VESC Tool-hoz:
 - A VESC Tool csak a Nordic UART szolgáltatást (NUS) hirdető eszközöket
   listázza (Windows alatt mindet), és azon keresztül a VESC saját csomagjait
   küldi.
