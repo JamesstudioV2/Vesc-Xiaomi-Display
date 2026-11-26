@@ -187,12 +187,33 @@ class TcLedTests(unittest.TestCase):
         self.d.poll()
         self.assertEqual(len(self.seg_frames()), n + 1)
 
-    def test_blinks_while_intervening(self):
+    def test_steady_while_intervening(self):
+        """A felhasználó kérése (2026-11-26): bekapcsolt TC-nél a Bluetooth ikon folyamatosan ég,
+        beavatkozáskor sem villog."""
+        n = len(self.seg_frames())
+        self.r.i.set("tc-front", 0.5)
+        self.r.v.now += 0.6
+        self.d.poll()
+        p = self.seg_frames()[-1]
+        self.assertGreater(len(self.seg_frames()), n)
+        self.assertEqual(p[1:7], [0, 0, 0, 0, 0, 64], "still steady")
+        self.assertEqual(p[13:19], [0] * 6, "no blinking")
+
+    def test_blinks_while_intervening_if_enabled(self):
+        self.r.i.set("tc-seg-blink", True)
         self.r.i.set("tc-front", 0.5)
         self.d.poll()
         p = self.seg_frames()[-1]
         self.assertEqual(p[1:7], [0] * 6)
         self.assertEqual(p[13:19], [0, 0, 0, 0, 0, 64], "blinking while TC cuts the front")
+
+    def test_no_bt_icon_in_profile1(self):
+        r, d = custom_rear()
+        r.boot_p1()
+        d.poll()
+        self.assertTrue(r.g("tc-on"))
+        segs = [payload(f) for f in ext_frames(r, 0x10)]
+        self.assertTrue(all(p[0] == 0 or p[6] == 0 for p in segs), "TC is a profile 2 feature")
 
     def test_cleared_when_switched_off(self):
         self.r.i.call("tc-toggle")

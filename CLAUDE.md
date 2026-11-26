@@ -252,6 +252,15 @@ Xiaomi M365 PRO 2 kijelző egy dual motoros VESC rendszeren, LispBM scripttel.
   látta, és a Balance/AB ágon a fékkar-kalibráció (`adc-v2-*`) miatt 0,5 s-onként ismétlődött volna. Javítva:
   `conf-try` / `conf-set-try` csendes + nem ismert név megjegyzése (minden ágon). README: mit jelent az üzenet.
 
+- 2026-11-26 (3): A `ccr-1d6792c0-f8r0ai` ág (egyedi kijelző támogatás, a kijelző repójának munkamenete) beolvasztva
+  a main-be. A felhasználó az egyedi firmware-t felírta, kérése: **bekapcsolt kipörgésgátlónál a Bluetooth ikon
+  folyamatosan világítson** (eddig beavatkozáskor villogott: most `tc-seg-blink nil` az alap), **az AB módban
+  (fut a balansz / szöglimitálás) a lakat ikon**. A LED-felülírás most több jelzést visz egy SEGMENTS keretben
+  (`seg-flags` bitjei, `seg-or`). Az egyedi firmware-ben a mód bájt 0x20-as bitje (MODE_LOCK) **csak a lakatot**
+  rajzolja (a sebesség, akku eltűnik), ezért egyedi kijelzőn az AB lakatja SEGMENTS-szel megy, a mód bit nélkül.
+  A kijelző repójának tesztjei (unicorn + gcc-arm-none-eabi kell) itt is futtathatók:
+  `VESC_XIAOMI_DISPLAY=/home/user/vesc-xiaomi-display python3 -m unittest discover -s tests` (30 OK).
+
 ## Következő lépések
 0. Egyedi kijelző-firmware **1.1** felírása ST-Linkkel (a kijelző repó README), `(status)` → `keretek` nő,
    `kijelzo egyedi fw 11`,

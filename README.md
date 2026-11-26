@@ -347,8 +347,10 @@ ezért arra sem jó. Alapból tehát nincs ikon (`tc-icon-field -1`), a
 kipörgésgátló kapcsolását a 3 sípolás jelzi.
 
 **Egyedi kijelző-firmware-rel** bármelyik LED jelezheti, alapból a **Bluetooth
-ikon** (`tc-seg-byte 5`, `tc-seg-bit 64`): bekapcsolt kipörgésgátlónál ég, és
-villog, amíg az első kereket visszafogja. Más LED-hez: `(led-teszt)`, ld.
+ikon** (`tc-seg-byte 5`, `tc-seg-bit 64`): bekapcsolt kipörgésgátlónál (2-es
+profil) **folyamatosan ég**. `(def tc-seg-blink t)` esetén villog, amíg az első
+kereket visszafogja. Kikapcsolt kipörgésgátlónál a Bluetooth ikon a kijelző saját
+Bluetooth kapcsolatát mutatja (mint gyárilag). Más LED-hez: `(led-teszt)`, ld.
 [Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
 
 Gyári kijelzőn, ha mégis egy ikon jelezze a bekapcsolt kipörgésgátlót (2-es profilban):
@@ -398,7 +400,7 @@ Mindegyik a `lisp/hatso_vezerlo.lisp` elején van, magyarázattal:
 - `tc-icon-field`, `tc-icon-bit`: a kipörgésgátló jelzése a gyári kijelzőn
   (alapból -1 = nincs; a Bluetooth ikon nem vezérelhető). Választás: `(ikon-teszt)`.
 - `dash-ext`, `ble-vesc-tool`, `ble-name`, `speed-color`, `tc-seg-byte`,
-  `tc-seg-bit`: az egyedi kijelző-firmware beállításai, ld.
+  `tc-seg-bit`, `tc-seg-blink`: az egyedi kijelző-firmware beállításai, ld.
   [Egyedi kijelző-firmware](#egyedi-kijelző-firmware).
 - `tc-default`, `tc-slip`, `tc-range`, `tc-recover`: a kipörgésgátló induló
   állapota, mennyivel foroghat az első kerék gyorsabban a hátsónál (km/h), az a
@@ -483,7 +485,8 @@ kijelző a HELLO-t figyelmen kívül hagyja. Felismeréskor a konzolon ez jeleni
 | `ble-vesc-tool` | `t` | VESC Tool a kijelző Bluetooth-án át (`cmds-proc`, kb. 3 KB memória) |
 | `ble-name` | `nil` | Bluetooth név, pl. `"Roller-VESC"`; `nil` = a kijelző alapneve (`MIScooterXXXX`) |
 | `speed-color` | `0` | a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő |
-| `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon). -1 = nincs |
+| `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon), bekapcsolt TC-nél folyamatosan ég. -1 = nincs |
+| `tc-seg-blink` | `nil` | `t` = a kipörgésgátló LED-je beavatkozás közben villog |
 
 Konzolparancsok (hátsó vezérlő):
 - `(led-teszt)`: 1,5 s-onként egyetlen LED világít a 48-ból (6 bájt × 8 bit).
