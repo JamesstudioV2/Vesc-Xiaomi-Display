@@ -572,10 +572,16 @@ előjel a BNO085 panel beépítési irányától függ.
 
 ### Lakat ikon
 
-Bekapcsolt Advanced Balance-nál a kijelzőn a **lakat ikon** világít: a script
-a mód bájt 32-es bitjét (LOCK) kapcsolja be a sebességmód mellé, a sebesség
-és az akku ugyanúgy látszik. A gyári vezérlő a zárolt állapotot ezzel a bittel
-jelzi.
+Bekapcsolt Advanced Balance-nál (amíg a szögkorlátozás fut) a kijelzőn a
+**lakat ikon** világít.
+
+- **Egyedi kijelző-firmware-rel** ([Egyedi kijelző-firmware](#egyedi-kijelző-firmware))
+  a lakat LED-felülírással ég (`ab-seg-byte 5`, `ab-seg-bit 128`), a sebesség, az
+  akku és a többi ikon ugyanúgy látszik. Bekapcsolt kipörgésgátlónál mellette a
+  Bluetooth ikon is folyamatosan ég.
+- **Gyári kijelzőn** a script a mód bájt 32-es bitjét (LOCK) kapcsolja be. A gyári
+  kijelző erre zárolt állapotot mutat: csak a lakat látszik, a sebesség és az akku
+  nem (más lehetőség a gyári kijelzőn nincs).
 - Ha a kijelződön a lakat mellett más is történik (pl. eltűnik a sebesség),
   vagy más ikont szeretnél, írd be a konzolba: `(ikon-teszt)`. 3
   másodpercenként egy-egy értéket küld (a 12. lépés a lakat), a lépés száma a
@@ -739,6 +745,7 @@ kijelző a HELLO-t figyelmen kívül hagyja. Felismeréskor a konzolon ez jeleni
 | `speed-color` | `0` | a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő |
 | `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon), bekapcsolt TC-nél folyamatosan ég. -1 = nincs |
 | `tc-seg-blink` | `nil` | `t` = a kipörgésgátló LED-je beavatkozás közben villog |
+| `ab-seg-byte`, `ab-seg-bit` | `5`, `128` | az Advanced Balance LED-je (lakat ikon), amíg az AB mód fut. -1 = nincs |
 
 Konzolparancsok (hátsó vezérlő):
 - `(led-teszt)`: 1,5 s-onként egyetlen LED világít a 48-ból (6 bájt × 8 bit).

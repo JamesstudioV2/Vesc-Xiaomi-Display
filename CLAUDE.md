@@ -324,10 +324,16 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   A kijelző repójának tesztjei (unicorn + gcc-arm-none-eabi kell) itt is futtathatók:
   `VESC_XIAOMI_DISPLAY=/home/user/vesc-xiaomi-display python3 -m unittest discover -s tests` (30 OK).
 
+- 2026-11-26 (4): Az egyedi kijelző támogatása (`ccr` ág 3 commitja + a folyamatos TC ikon) átvezetve az AB ágra.
+  Új: amíg az AB mód fut (`ab-on`) és egyedi kijelző van (`dash-custom`), a **lakat** LED-felülírással ég
+  (`ab-seg-byte 5`, `ab-seg-bit 128`, `seg-flags` 4-es bit), a mód bájt LOCK bitje nélkül (gyári kijelzőn marad a
+  LOCK bit: ott csak a lakat látszik). A TC Bluetooth ikonja folyamatos. 237 teszt; a kijelző repójának 3
+  végponttól végpontig tesztje az AB scripttel is átmegy. Az AB hátsó forrás 89 KB (korlát 128 KB); LispBM
+  memória 28 KB (`LBM_MEMORY_SIZE_28K`), az alagút 1,5 KB + `cmds-start-stop` kb. 3 KB belefér.
+
 ## Következő lépések
-0. Egyedi kijelző-firmware **1.1** felírása ST-Linkkel (a kijelző repó README), `(status)` → `keretek` nő,
-   `kijelzo egyedi fw 11`,
-   `(led-teszt)`, `(szin-teszt)`, VESC Tool Bluetooth-on. Utána a Balance/AB ágak támogatása.
+0. Egyedi kijelző-firmware 1.1 (a felhasználó felírta, 2026-11-26): a TC Bluetooth ikonja és az AB lakatja a
+   valóságban; `(status)` → `kijelzo egyedi fw 11`; `(led-teszt)`, `(szin-teszt)`, VESC Tool Bluetooth-on.
 1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés; a gyári
    BLE129 bármely nem nulla értékre kapcsolja), és melyik ikon jelezze a kipörgésgátlót (gyári kijelzőn a
    Bluetooth nem vezérelhető, egyedi firmware-rel igen). Kipörgésgátló hangolása (`tc-slip`, `tc-range`).

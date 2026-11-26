@@ -213,6 +213,11 @@
 (def ab-icon-mode 'bit)           ; 'bit = egy bit egy mezőben, nil = nincs jelzés
 (def ab-icon-field 0)             ; 0 = mód, 2 = lámpa, 3 = sípolás mező
 (def ab-icon-bit 32)              ; a mód bájtban: 32 = lakat (LOCK)
+; Egyedi kijelző-firmware-rel az AB jelzése egy LED (SEGMENTS felülírás): amíg az
+; AB mód fut, a lakat ikon ég, a sebesség és az akku is látszik. (A mód bájt LOCK
+; bitjére a kijelző csak a lakatot rajzolná ki, ezért egyedi kijelzőn azt nem küldjük.)
+(def ab-seg-byte 5)               ; 5. bájt 128 = lakat ikon; -1 = nincs
+(def ab-seg-bit 128)
 
 ; Hibakódok (táblázat: README "Hibakódok")
 (def lever-raw-min 16)            ; a kar nyers jele (0-255) ez alatt hibás: szakadás, nincs táp
@@ -682,7 +687,8 @@
         (bufset-u8 tx-frame 11 err-shown) ; hibakód (update-error, táblázat: README)
         (if (< dash-test-field 0)
             {
-                (if (and ab-on (eq ab-icon-mode 'bit)) (dash-or ab-icon-field ab-icon-bit)) ; AB: lakat ikon
+                (if (and ab-on (eq ab-icon-mode 'bit) (not (ab-seg-on))) ; AB: lakat ikon (gyári kijelző)
+                    (dash-or ab-icon-field ab-icon-bit))
                 (if (tc-icon-on) (dash-or tc-icon-field tc-icon-bit)) ; kipörgésgátló jelzés
             }
             (if dash-test-or ; (ikon-teszt)
@@ -752,11 +758,16 @@
 
 (defun tc-seg-on () (and tc-on (= profile 2) (>= tc-seg-byte 0) (> tc-seg-bit 0)))
 
-; A kívánt LED felülírások bitjei: 1 = kipörgésgátló, 2 = az villog. Egy keretben
-; mind egyszerre megy (a SEGMENTS keret a kijelző teljes felülírását cseréli).
+; Az AB mód fut, és egyedi kijelző van: a lakat LED-del jelez.
+(defun ab-seg-on () (and ab-on dash-custom (>= ab-seg-byte 0) (> ab-seg-bit 0)))
+
+; A kívánt LED felülírások bitjei: 1 = kipörgésgátló, 2 = az villog, 4 = AB mód
+; (lakat). Egy keretben mind egyszerre megy (a SEGMENTS keret a kijelző teljes
+; felülírását cseréli).
 (defun seg-flags ()
     (+ (if (tc-seg-on) 1 0)
-        (if (and (tc-seg-on) tc-seg-blink (< tc-front 0.99)) 2 0)))
+        (if (and (tc-seg-on) tc-seg-blink (< tc-front 0.99)) 2 0)
+        (if (ab-seg-on) 4 0)))
 
 (defun seg-key () ; a kívánt LED felülírás azonosítója, 0 = nincs
     (if (>= dash-seg-test 0) (+ 1000 dash-seg-test) (seg-flags)))
@@ -781,6 +792,7 @@
                     (bufset-u8 f 6 15) ; ttl 1,5 s, 0,5 s-onként frissítjük
                     (if (= (bitwise-and k 1) 1)
                         (seg-or f (if (= (bitwise-and k 2) 2) 19 7) tc-seg-byte tc-seg-bit))
+                    (if (= (bitwise-and k 4) 4) (seg-or f 7 ab-seg-byte ab-seg-bit))
                     (dx-send f 0x10)
             })
             (t (dx-segments 0 -1 0 nil nil)))

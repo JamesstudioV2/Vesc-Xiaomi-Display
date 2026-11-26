@@ -503,3 +503,59 @@ class ClosedLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CustomDashAbIconTests(unittest.TestCase):
+    """Egyedi kijelző-firmware (M365_Display_Costum_BLE): amíg az AB mód fut, a lakat
+    ikon SEGMENTS felülírással ég, a mód bájt LOCK bitje nélkül (arra a kijelző csak a
+    lakatot rajzolná ki). A kipörgésgátló a Bluetooth ikonon folyamatosan (a
+    felhasználó kérése, 2026-11-26)."""
+
+    def custom(self):
+        from lbm_sim import xiaomi_frame
+        r = rear_p2()
+        r.feed(xiaomi_frame(0x20, 0x7A, 0x81, [0x04, IDLE, IDLE, 0, 0, 1, 1, 1, 0xFF, 0]))  # HELLO_ACK
+        self.assertTrue(r.g("dash-custom"))
+        return r
+
+    def segs(self, r):
+        from test_custom_dash import ext_frames, payload
+        return [payload(f) for f in ext_frames(r, 0x10)]
+
+    def poll(self, r, n=1):
+        for _ in range(n):
+            r.v.now += 0.05
+            r.lever_frame(cmd=0x65)
+
+    def test_lock_and_bluetooth_together_without_lock_mode(self):
+        r = self.custom()
+        ab_on(r)
+        self.poll(r)
+        p = self.segs(r)[-1]
+        self.assertEqual(p[0], 15, "ttl 1.5 s, refreshed")
+        self.assertEqual(p[6], 64 | 128, "5th byte: Bluetooth (TC on) + lock (AB running)")
+        self.assertEqual(p[13:19], [0] * 6, "nothing blinks")
+        self.assertEqual(r.last_dash()[6] & 32, 0, "no LOCK mode bit: speed and battery stay visible")
+
+    def test_lock_goes_off_with_ab(self):
+        r = self.custom()
+        ab_on(r)
+        self.poll(r)
+        r.brk = FULL
+        double_press(r)
+        self.assertFalse(r.g("ab-on"))
+        r.brk = IDLE
+        self.poll(r)
+        self.assertEqual(self.segs(r)[-1][6], 64, "only the TC icon remains")
+
+    def test_only_lock_when_tc_off(self):
+        r = self.custom()
+        r.i.call("tc-toggle")
+        ab_on(r)
+        self.poll(r)
+        self.assertEqual(self.segs(r)[-1][6], 128)
+
+    def test_stock_dash_keeps_lock_mode_bit(self):
+        r = ab_on()
+        self.assertFalse(r.g("dash-custom"))
+        self.assertEqual(r.last_dash()[6] & 32, 32, "stock dash: the LOCK mode bit is the only way")
