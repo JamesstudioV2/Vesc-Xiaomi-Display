@@ -182,10 +182,14 @@ class BrakeCalibrationFallbackTests(unittest.TestCase):
         r.i.call("refresh-gate")
         self.assertEqual(r.g("brk-start"), 0.9)
         self.assertEqual(r.g("brk-end"), 2.1)
+        self.assertEqual(r.v.trapped_log, [], "no 'Error (trapped)' on the console")
+        r.i.call("refresh-gate")
+        self.assertLessEqual(r.v.conf_get_calls.get("adc-v2-start", 0), 1, "asked only once")
 
     def test_newer_firmware_uses_brake_calibration(self):
         r = Rear()
         r.v.newer_fw = True
+        r.i.set("conf-missing", None)   # a Rear() a kiadott 7.00-val indult: a "nem ismert" lista törlése
         r.v.conf["adc-v2-start"] = 0.7
         r.v.conf["adc-v2-end"] = 1.9
         r.i.call("refresh-gate")

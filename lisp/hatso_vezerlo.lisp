@@ -253,6 +253,7 @@
 (def tc-front 1.0)             ; az első kerék kipörgésgátló szorzója (1 = nincs beavatkozás)
 (def tc-time 0)
 (def rear-scale -1.0)          ; a hátsón utoljára beállított áram-szorzó
+(def conf-missing nil)         ; a firmware által nem ismert paraméterek ((név . t) ...)
 (def dash-test-field -1)       ; (ikon-teszt) alatt: a felülírt kijelző mező (-1 = nincs teszt)
 (def dash-test-value 0)
 (def dash-test-or t)           ; t = a bitet hozzáadja a mezőhöz, nil = a mezőt lecseréli
@@ -276,13 +277,35 @@
 ; Konfiguráció olvasása hibatűréssel. A kiadott 7.00-s firmware (2026-05-15)
 ; nem ismer néhány később hozzáadott paramétert (adc-tc, adc-v2-...): ezekre
 ; a conf-get hibát dob, ami az egész szálat leállítaná. Ilyenkor dflt.
-(defun conf-try (name dflt) {
-        (var r (trap (conf-get name)))
-        (if (eq (car r) 'exit-ok) (ix r 1) dflt)
-})
+; A trap-pel elkapott hibát a 7.00 a konzolra is kiírja ("Error (trapped):
+; eval_error ... Parameter not recognized"), ezért erre az egy hívásra
+; elrejtjük, és a nem ismert nevet megjegyezzük: legközelebb meg sem kérdezzük
+; (a felhasználó képernyőképe, 2026-11-26; a fékkar kalibrációját 0,5 s-onként olvassuk).
+(defun conf-try (name dflt)
+    (if (assoc conf-missing name) dflt {
+            (hide-trapped-error)
+            (var r (trap (conf-get name)))
+            (show-trapped-error)
+            (if (eq (car r) 'exit-ok)
+                (ix r 1)
+                {
+                    (setq conf-missing (acons name t conf-missing))
+                    dflt
+                })
+}))
 
 (defun conf-set-try (name val) ; t, ha sikerült
-    (eq (car (trap (conf-set name val))) 'exit-ok))
+    (if (assoc conf-missing name) nil {
+            (hide-trapped-error)
+            (var r (trap (conf-set name val)))
+            (show-trapped-error)
+            (if (eq (car r) 'exit-ok)
+                t
+                {
+                    (setq conf-missing (acons name t conf-missing))
+                    nil
+                })
+}))
 
 (defun mode-limits (prof mode)
     (if (= prof 2)

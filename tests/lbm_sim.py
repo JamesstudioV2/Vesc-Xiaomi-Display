@@ -242,6 +242,9 @@ class Vesc:
         self.eeprom_writes = 0
         self.newer_fw = False      # t = a 2026 júniusa utáni 7.00 (ismeri a NEWER_PARAMS-ot)
         self.od_pullup = set()     # lábak külső felhúzóval (nyitott drain módhoz, pl. 1k 5 V-ra)
+        self.hide_trapped = False  # (hide-trapped-error) / (show-trapped-error)
+        self.trapped_log = []      # trap-pel elkapott hibák, amelyeket a 7.00 a konzolra írna
+        self.conf_get_calls = {}   # név -> hányszor hívták a conf-get-et
         self.gpio_short = set()    # lábak, amelyeket a külvilág GND-re húz (zárlatos gate)
         self.fail_conf = set()     # ezekre a nevekre a conf-set hibát dob (hibainjektálás)
 
@@ -459,6 +462,10 @@ class Interp:
         try:
             return [Symbol("exit-ok"), self.eval(x[1], env)]
         except LispError as e:
+            # eval_cps.c (7.00): az elkapott hibát is kiírja ("Error (trapped): ..."),
+            # hacsak nem hívták a (hide-trapped-error)-t
+            if not self.vesc.hide_trapped:
+                self.vesc.trapped_log.append(str(e))
             return [Symbol("exit-error"), str(e)]
 
     def f_recv(self, x, env):
@@ -665,6 +672,7 @@ class Interp:
             return True
 
         def conf_get(name):
+            v.conf_get_calls[str(name)] = v.conf_get_calls.get(str(name), 0) + 1
             known_param(name, "conf-get")
             if name not in v.conf:
                 raise LispError("conf-get: %s not mocked" % name)
@@ -811,6 +819,8 @@ class Interp:
             "str-merge": lambda *a: LString("".join(a)),
             "str-from-n": str_from_n,
             "sym2str": lambda sym: LString(str(sym)),
+            "hide-trapped-error": lambda: setattr(v, "hide_trapped", True) or True,
+            "show-trapped-error": lambda: setattr(v, "hide_trapped", False) or True,
             "print": show,
             "systime": systime, "secs-since": secs_since, "sleep": sleep,
             "spawn": lambda *a: True,

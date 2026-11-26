@@ -67,7 +67,11 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
 - **Firmware alapvonal: a KIADOTT 7.00** (bldc 26af694 „Release 7.00”, 2026-05-15). A release_7_00 ág később kapott
   paramétereket (`adc-v2-start/end` 2026-06-09, `adc-tc` 2026-06-13), ezekre a kiadott firmware `conf-get`-je
   „Parameter not recognized” hibát dob, ami a hívó szálat leállítja. Ilyet csak `conf-try` / `conf-set-try`
-  (trap + alapérték) használhat. A `tools/fw7_00_symbols.txt` a kiadott 7.00-ból van generálva, a szimulátor
+  (trap + alapérték) használhat. A 7.00 az **elkapott hibát is kiírja** („Error (trapped): eval_error ... bound to:
+  adc-tc ... Parameter not recognized”, `eval_cps.c` `error_ctx_base`, a felhasználó képernyőképe 2026-11-26), ezért a
+  `conf-try` / `conf-set-try` a hívás idejére `(hide-trapped-error)` ... `(show-trapped-error)`-t használ, és a nem
+  ismert nevet a `conf-missing` listában megjegyzi (a Balance/AB `refresh-gate` 0,5 s-onként kérdezné az
+  `adc-v2-*`-t). A szimulátor `trapped_log`-ja azt gyűjti, ami a konzolra kerülne; teszt: kiadott 7.00-n üres. A `tools/fw7_00_symbols.txt` a kiadott 7.00-ból van generálva, a szimulátor
   (`NEWER_PARAMS`) alapból a kiadottat utánozza, és UART-indítás nélkül nem enged UART-ot.
 - **Névszabály:** `ext-` kezdetű nevet TILOS definiálni (def/defun/var/paraméter): a LispBM olvasó minden ilyen
   szimbólumot a kiterjesztés-táblába tesz (natív könyvtáraknak), és a definiálás betöltéskor „Cannot redefine
@@ -228,6 +232,13 @@ A `main` ágon nincs benne. Valódi rolleren még nincs kipróbálva.
   vezérlőről a lámpás részek törlése, README ennek megfelelően. Kész (ld. fent); a tesztek közül az első
   vezérlős lámpa tesztjei törölve, helyettük: az első egy lábhoz sem nyúl, a hátsó nem küld lámpa bitet.
   119 teszt a main-en, 157 a Balance ágon. A rajzon „Külső lámpa” (nem „Első lámpa”).
+
+- 2026-11-26: A felhasználó képernyőképe (AB hátsó, 1555 soros script, a CAN eszközlista: mindkét vezérlő
+  **75 100 V2**): „Error (trapped): eval_error, CTX 408 main-u, bound to: adc-tc, In: conf-get, Between row 1554
+  and 1555, Parameter not recognized”. Ártalmatlan (elkapott hiba, a script fut tovább), de a felhasználó hibának
+  látta, és a Balance/AB ágon a fékkar-kalibráció (`adc-v2-*`) miatt 0,5 s-onként ismétlődött volna. Javítva:
+  `conf-try` / `conf-set-try` csendes + nem ismert név megjegyzése (minden ágon). README: mit jelent az üzenet.
+  Tesztek: 122 a main-en, 160 a Balance ágon.
 
 ## Következő lépések
 1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés), és melyik
