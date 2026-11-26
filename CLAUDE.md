@@ -309,8 +309,15 @@ A `main` és a `Balance` ágon nincs benne. Valódi rolleren még nincs kiprób�
   3 végponttól végpontig teszt köti össze a lefordított firmware-t ezzel a scripttel. 144 teszt itt.
   A Balance / Advanced-Balance ágakra még nincs átvezetve.
 
+- 2026-11-26: A felhasználó: a felírt egyedi kijelző-firmware (1.0) nem kommunikál a Lisp kóddal.
+  **A hiba a kijelző firmware-ében volt, nem itt:** a gyári kijelző-firmware minden keret előtt a busz
+  vezetékére (P0.15) teszi az UART TX-et, az 1.0 végig a P0.20-on adott, így a VESC semmit nem kapott.
+  A kijelző repójában javítva (**1.1**, `(status)`: `kijelzo egyedi fw 11`); az ottani emulátor busza
+  azóta lábhelyes. Itt nem kellett változtatni (a protokoll ugyanaz).
+
 ## Következő lépések
-0. Egyedi kijelző-firmware: felírás ST-Linkkel (a kijelző repó README), `(status)` → `kijelzo egyedi`,
+0. Egyedi kijelző-firmware **1.1** felírása ST-Linkkel (a kijelző repó README), `(status)` → `keretek` nő,
+   `kijelzo egyedi fw 11`,
    `(led-teszt)`, `(szin-teszt)`, VESC Tool Bluetooth-on. Utána a Balance/AB ágak támogatása.
 1. Kijelző lámpája: az `(ikon-teszt)` melyik lépésénél gyullad ki (ha egyiknél sem: táp / bekötés; a gyári
    BLE129 bármely nem nulla értékre kapcsolja), és melyik ikon jelezze a kipörgésgátlót (gyári kijelzőn a
