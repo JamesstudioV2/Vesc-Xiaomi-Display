@@ -110,7 +110,8 @@
 (def speed-color 0)           ; a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő
 (def tc-seg-byte 5)           ; egyedi kijelzőn a kipörgésgátló jelzése egy LED: bájt (0-5)
 (def tc-seg-bit 64)           ;   és bit érték (5. bájt 64 = Bluetooth ikon); -1 = nincs.
-                              ;   Bekapcsolt TC-nél ég, beavatkozáskor villog. (led-teszt)
+                              ;   Bekapcsolt kipörgésgátlónál (2-es profil) folyamatosan ég.
+(def tc-seg-blink nil)        ;   t = beavatkozás közben villog (nil = mindig folyamatos)
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -690,11 +691,17 @@
 
 (defun tc-seg-on () (and tc-on (= profile 2) (>= tc-seg-byte 0) (> tc-seg-bit 0)))
 
+; A kívánt LED felülírások bitjei: 1 = kipörgésgátló, 2 = az villog. Egy keretben
+; mind egyszerre megy (a SEGMENTS keret a kijelző teljes felülírását cseréli).
+(defun seg-flags ()
+    (+ (if (tc-seg-on) 1 0)
+        (if (and (tc-seg-on) tc-seg-blink (< tc-front 0.99)) 2 0)))
+
 (defun seg-key () ; a kívánt LED felülírás azonosítója, 0 = nincs
-    (cond
-        ((>= dash-seg-test 0) (+ 1000 dash-seg-test))
-        ((tc-seg-on) (+ 2000 (if (< tc-front 0.99) 1 0)))
-        (t 0)))
+    (if (>= dash-seg-test 0) (+ 1000 dash-seg-test) (seg-flags)))
+
+(defun seg-or (f base seg-byte bits) ; f: SEGMENTS keret; base 7 = be, 19 = villog
+    (bufset-u8 f (+ base seg-byte) (bitwise-or (bufget-u8 f (+ base seg-byte)) bits)))
 
 (defun seg-due () {
         (var k (seg-key))
@@ -708,7 +715,13 @@
         (cond
             ((>= dash-seg-test 0)
                 (dx-segments 30 (/ dash-seg-test 8) (shl 1 (mod dash-seg-test 8)) t nil))
-            ((> k 0) (dx-segments 15 tc-seg-byte tc-seg-bit nil (= k 2001)))
+            ((> k 0) {
+                    (var f (bufcreate 27))
+                    (bufset-u8 f 6 15) ; ttl 1,5 s, 0,5 s-onként frissítjük
+                    (if (= (bitwise-and k 1) 1)
+                        (seg-or f (if (= (bitwise-and k 2) 2) 19 7) tc-seg-byte tc-seg-bit))
+                    (dx-send f 0x10)
+            })
             (t (dx-segments 0 -1 0 nil nil)))
 })
 
