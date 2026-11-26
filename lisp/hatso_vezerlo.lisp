@@ -112,6 +112,8 @@
 (def tc-seg-bit 64)           ;   és bit érték (5. bájt 64 = Bluetooth ikon); -1 = nincs.
                               ;   Bekapcsolt kipörgésgátlónál (2-es profil) folyamatosan ég.
 (def tc-seg-blink nil)        ;   t = beavatkozás közben villog (nil = mindig folyamatos)
+(def bal-seg-byte 5)          ; egyedi kijelzőn a futó balansz mód jelzése: 5. bájt 128 = lakat
+(def bal-seg-bit 128)         ;   ikon (a sebesség és az akku is látszik); -1 = nincs
 
 ; Berúgás (csak 1-es profil)
 (def kick-speed 3.0)          ; km/h - eddig kell berúgni, hogy a gáz működjön
@@ -691,11 +693,16 @@
 
 (defun tc-seg-on () (and tc-on (= profile 2) (>= tc-seg-byte 0) (> tc-seg-bit 0)))
 
-; A kívánt LED felülírások bitjei: 1 = kipörgésgátló, 2 = az villog. Egy keretben
-; mind egyszerre megy (a SEGMENTS keret a kijelző teljes felülírását cseréli).
+; A balansz mód fut, és egyedi kijelző van: a lakat LED-del jelez.
+(defun bal-seg-on () (and (balancing) dash-custom (>= bal-seg-byte 0) (> bal-seg-bit 0)))
+
+; A kívánt LED felülírások bitjei: 1 = kipörgésgátló, 2 = az villog, 4 = balansz
+; (lakat). Egy keretben mind egyszerre megy (a SEGMENTS keret a kijelző teljes
+; felülírását cseréli).
 (defun seg-flags ()
     (+ (if (tc-seg-on) 1 0)
-        (if (and (tc-seg-on) tc-seg-blink (< tc-front 0.99)) 2 0)))
+        (if (and (tc-seg-on) tc-seg-blink (< tc-front 0.99)) 2 0)
+        (if (bal-seg-on) 4 0)))
 
 (defun seg-key () ; a kívánt LED felülírás azonosítója, 0 = nincs
     (if (>= dash-seg-test 0) (+ 1000 dash-seg-test) (seg-flags)))
@@ -720,6 +727,7 @@
                     (bufset-u8 f 6 15) ; ttl 1,5 s, 0,5 s-onként frissítjük
                     (if (= (bitwise-and k 1) 1)
                         (seg-or f (if (= (bitwise-and k 2) 2) 19 7) tc-seg-byte tc-seg-bit))
+                    (if (= (bitwise-and k 4) 4) (seg-or f 7 bal-seg-byte bal-seg-bit))
                     (dx-send f 0x10)
             })
             (t (dx-segments 0 -1 0 nil nil)))

@@ -402,3 +402,35 @@ class ClosedLoopTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CustomDashBalanceIconTests(unittest.TestCase):
+    """Egyedi kijelző-firmware: amíg a balansz mód fut, a lakat ikon ég (LED-felülírás,
+    a sebesség és az akku is látszik); a kipörgésgátló a Bluetooth ikonon folyamatosan."""
+
+    def segs(self, r):
+        from test_custom_dash import ext_frames, payload
+        return [payload(f) for f in ext_frames(r, 0x10)]
+
+    def hello_ack(self, r):
+        from lbm_sim import xiaomi_frame
+        r.feed(xiaomi_frame(0x20, 0x7A, 0x81, [0x04, IDLE, IDLE, 0, 0, 1, 1, 1, 0xFF, 0]))
+        self.assertTrue(r.g("dash-custom"))
+
+    def poll(self, r):
+        r.v.now += 0.05
+        r.lever_frame(cmd=0x65)
+
+    def test_lock_while_balancing(self):
+        r = rear_balancing()
+        self.hello_ack(r)
+        self.poll(r)
+        p = self.segs(r)[-1]
+        self.assertEqual(p[6], 64 | 128, "Bluetooth (TC on) + lock (balancing)")
+        self.assertEqual(r.last_dash()[6] & 32, 0, "no LOCK mode bit")
+
+    def test_no_lock_when_not_balancing(self):
+        r = rear_p2()
+        self.hello_ack(r)
+        self.poll(r)
+        self.assertEqual(self.segs(r)[-1][6], 64, "only the TC icon")

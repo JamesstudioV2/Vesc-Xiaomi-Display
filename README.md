@@ -612,6 +612,7 @@ kijelző a HELLO-t figyelmen kívül hagyja. Felismeréskor a konzolon ez jeleni
 | `speed-color` | `0` | a sebesség számjegyei: 0 = fehér, 1 = piros, 2 = mindkettő |
 | `tc-seg-byte`, `tc-seg-bit` | `5`, `64` | a kipörgésgátló LED-je (Bluetooth ikon), bekapcsolt TC-nél folyamatosan ég. -1 = nincs |
 | `tc-seg-blink` | `nil` | `t` = a kipörgésgátló LED-je beavatkozás közben villog |
+| `bal-seg-byte`, `bal-seg-bit` | `5`, `128` | a balansz mód LED-je (lakat ikon), amíg a balansz fut. -1 = nincs |
 
 Konzolparancsok (hátsó vezérlő):
 - `(led-teszt)`: 1,5 s-onként egyetlen LED világít a 48-ból (6 bájt × 8 bit).
