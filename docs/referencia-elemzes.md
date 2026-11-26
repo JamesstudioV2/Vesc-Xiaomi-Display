@@ -88,10 +88,17 @@ crc = (len + addr + cmd + arg + payload bájtok összege) XOR 0xFFFF
 Az ESC → kijelző mód bájt bitjei: 1 = D, 2 = ECO, 4 = S, 8 = töltés,
 16 = kikapcsolva, 32 = zár, 64 = mph, 128 = hőfok ikon.
 
-A lámpa bájt: az M365 kijelző a **6-os bitre** (0x40) kapcsolja a saját
-lámpáját. A gyári vezérlő 0x64-et küld, a Koxx3 firmware 0x40-et (lucidnx
-mérése). Az A-Emile/PierreDisplayDash scriptek 1-et küldenek, ettől csak az
-ikon gyullad ki. A mi scriptünk 100-at (0x64) küld (`dash-light-value`).
+A lámpa bájt: a lucidnx mérése szerint az M365 kijelző a **6-os bitre** (0x40)
+kapcsolja a saját lámpáját. A gyári vezérlő 0x64-et küld, a Koxx3 firmware 0x40-et.
+Az A-Emile/PierreDisplayDash scriptek 1-et küldenek, ettől csak az ikon gyullad ki.
+A mi scriptünk 100-at (0x64) küld (`dash-light-value`).
+
+**Pontosítás (2026-11-25):** a gyári Pro 2 BLE129 kijelző-firmware-t emulátorban
+futtattuk ([M365_Display_Costum_BLE](https://github.com/JamesstudioV2/M365_Display_Costum_BLE),
+`docs/hardver.md`). Eszerint a lámpa mező **bármely nem nulla értékére** ég az ikon
+és a lámpakimenet (P0.03), és a fényerő 7-ről 2-re csökken. A mód bájt: 0x02 ECO,
+0x04 S, egyébként D (az 1-es bit hatástalan). A hibakódot a kijelző kb. 2 s után
+**piros** számjegyekkel mutatja.
 
 ## Amiben a mi rendszerünk eltér
 
