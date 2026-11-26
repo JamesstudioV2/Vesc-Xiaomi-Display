@@ -628,6 +628,33 @@ class FirmwareCompatTests(unittest.TestCase):
         i.call("boot")
         self.assertEqual(i.vesc.conf["adc-tc"], 0)
 
+    def test_no_trapped_error_noise_on_release_7_00(self):
+        """A 7.00 a trap-pel elkapott hibát is kiírja ("Error (trapped): eval_error ...
+        adc-tc ... Parameter not recognized", a felhasználó képernyőképe, 2026-11-26).
+        A conf-try ezt elrejti, és a nem ismert nevet többé meg sem kérdezi."""
+        r = Rear()
+        r.boot_p1()
+        r.step(int(3.0 / STEP))          # több félmásodperces frissítés is lefut
+        self.assertEqual(r.v.trapped_log, [], "nothing on the console")
+        self.assertFalse(r.v.hide_trapped, "printing of real errors is switched back on")
+        self.assertLessEqual(r.v.conf_get_calls.get("adc-tc", 0), 1)
+        for name in ("adc-v2-start", "adc-v2-end"):
+            self.assertLessEqual(r.v.conf_get_calls.get(name, 0), 1, name)
+
+    def test_simulator_shows_the_old_noise(self):
+        i = Interp()
+        i.run("(trap (conf-get 'adc-tc))")
+        self.assertEqual(len(i.vesc.trapped_log), 1, "without hide-trapped-error it is printed")
+
+    def test_conf_try_on_newer_firmware_reads_the_value(self):
+        i = Interp()
+        i.vesc.newer_fw = True
+        i.vesc.conf["adc-v2-start"] = 0.9
+        i.load(REAR)
+        self.assertEqual(i.call("conf-try", Symbol("adc-v2-start"), 0.5), 0.9)
+        self.assertIsNone(i.get("conf-missing"))
+        self.assertEqual(i.vesc.trapped_log, [])
+
     def test_later_init_error_keeps_the_dash_alive(self):
         i = Interp()
         i.vesc.fail_conf = {"max-speed"}  # az init második része hibát dob

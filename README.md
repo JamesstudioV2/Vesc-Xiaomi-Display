@@ -244,6 +244,12 @@ még a kép mentése előtt betölti). Előfordulhat még, ha a konzolba elgépe
 ismeretlen nevet írsz, és utána rögtön kikapcsolod a VESC-et: ilyenkor is a
 feltöltés a megoldás.
 
+**`Error (trapped): eval_error ... bound to: adc-tc ... Parameter not recognized`**:
+ártalmatlan. A script egy olyan beállítást kérdezett le, amelyet csak az újabb
+firmware ismer (a kiadott 7.00 nem), és a hibát elkapta, a script futott tovább.
+A 7.00 az elkapott hibát is kiírja. Az új script ezt a kiírást elrejti, és a nem
+ismert beállítást többé meg sem kérdezi.
+
 ## Hibakeresés
 
 A Lisp konzolban (REPL) a `(status)` parancs kiírja a profilt, az állapotot, a
